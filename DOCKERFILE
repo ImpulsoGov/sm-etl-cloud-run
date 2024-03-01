@@ -1,0 +1,9 @@
+FROM python:3.10
+
+COPY sm_teste_pa.py
+
+
+RUN pip install -r requirements.txt
+
+
+ENTRYPOINT ["python", "sm_teste_pa.py"]
