@@ -20,10 +20,7 @@ from dbfread import DBF, FieldParser
 from more_itertools import ichunked
 from pysus.utilities.readdbc import dbc2dbf
 
-
-
 import re
-from datetime import date
 from ftplib import FTP
 from typing import Generator
 
@@ -33,8 +30,6 @@ parser = argparse.ArgumentParser(
                     prog='SM Teste PA',
                     description='Baixa os arquivos de disseminação de procedimentos ambulatorias do FTP do DataSUS'
 )
-
-args = parser.parse_args()
 
 parser.add_argument('-u', '--UF')
 parser.add_argument('-d', '--data')
@@ -268,7 +263,7 @@ def extrair_dbc_lotes(
 
 def extrair_pa(
     uf_sigla: str,
-    periodo_data_inicio: date,
+    periodo_data_inicio: datetime.date,
     passo: int = 10000,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai registros de procedimentos ambulatoriais do FTP do DataSUS.
@@ -303,7 +298,7 @@ def extrair_pa(
 
 
 
-def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: date, path: str) -> pd.DataFrame:
+def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date, path: str) -> pd.DataFrame:
     """
     ...
     """
@@ -327,6 +322,6 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: date, path: str) -
     return df_dados_final
 
 
-data_datetime = datetime.date.strptime(parametros.data, "%Y-%m-%d")
+data_datetime = datetime.datetime.strptime(parametros.data, "%Y-%m-%d")
 
 baixar_e_processar_pa(parametros.UF, data_datetime, parametros.path)
