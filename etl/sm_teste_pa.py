@@ -20,22 +20,20 @@ from dbfread import DBF, FieldParser
 from more_itertools import ichunked
 from pysus.utilities.readdbc import dbc2dbf
 
+from google.cloud import storage
+
 import re
 from ftplib import FTP
 from typing import Generator
 
 import pandas as pd
 
-parser = argparse.ArgumentParser(
-                    prog='SM Teste PA',
-                    description='Baixa os arquivos de disseminação de procedimentos ambulatorias do FTP do DataSUS'
-)
 
-parser.add_argument('-u', '--UF')
-parser.add_argument('-d', '--data')
-parser.add_argument('-p', '--path')
-
-parametros = parser.parse_args()
+def upload_to_bucket(bucket_name, blob_path, plain_text):
+    bucket = storage.Client().bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    url = blob.upload_from_string(plain_text.encode('utf8'))
+    return url
 
 
 # set up logging to file
@@ -252,7 +250,7 @@ def extrair_dbc_lotes(
                     "Lendo trecho do arquivo DBF disponibilizado pelo DataSUS "
                     + f"e convertendo em DataFrame (linhas {contador} a {contador + passo})...",
                 )
-                yield pd.DataFrame(fatia)
+                yield arquivo_compativel_nome, contador, pd.DataFrame(fatia)
                 contador += passo
 
     logging.debug(f"Encerrando a conexão com o servidor FTP `{ftp}`...")
@@ -264,7 +262,7 @@ def extrair_dbc_lotes(
 def extrair_pa(
     uf_sigla: str,
     periodo_data_inicio: datetime.date,
-    passo: int = 10000,
+    passo: int = 100000,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai registros de procedimentos ambulatoriais do FTP do DataSUS.
 
@@ -297,31 +295,42 @@ def extrair_pa(
     )
 
 
-
-def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date, path: str) -> pd.DataFrame:
+def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
     ...
     """
 
     # Extrair dados
     df_dados_todos = []
-    for df_dados in extrair_pa(
+    arquivos_capturados = []
+    for arquivo_dbc, _, df_dados in extrair_pa(
         uf_sigla=uf_sigla,
         periodo_data_inicio=periodo_data_inicio,
     ):
         df_dados_todos.append(df_dados)
+        arquivos_capturados.append(arquivo_dbc)
 
     # Concatenar DataFrames
     df_dados_final = pd.concat(df_dados_todos)
 
     # Salvar localmente
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-    caminho_arquivo_csv = os.path.join(path, nome_arquivo_csv) # TODO Corrigir
-    df_dados_final.to_csv(caminho_arquivo_csv, index=False)
+    df_dados_final.to_csv(nome_arquivo_csv, index=False)
 
-    return df_dados_final
+    path_gcs = f"saude-mental/dados-publicos/siasus/{uf_sigla}/{nome_arquivo_csv}"
+    # Salvar no GCS
+    upload_to_bucket(
+        bucket_name="camada-bronze", 
+        blob_path=path_gcs,
+        plain_text=df_dados_final.to_csv()
+    )
 
+    response = {
+        "status": "OK",
+        "estado": uf_sigla,
+        "periodo": f"{periodo_data_inicio:%y%m}",
+        "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
+        "arquivos_origem_dbc": list(set(arquivos_capturados)),
+    }
 
-data_datetime = datetime.datetime.strptime(parametros.data, "%Y-%m-%d")
-
-baixar_e_processar_pa(parametros.UF, data_datetime, parametros.path)
+    return response
