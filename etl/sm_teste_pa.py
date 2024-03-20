@@ -295,6 +295,36 @@ def extrair_pa(
     )
 
 
+def filtrar_pa(pa: pd.DataFrame) -> pd.DataFrame:
+    """Filtra um DataFrame de procedimentos ambulatoriais do SIASUS de acordo com
+    condições predefinidas.
+
+    Argumentos:
+        pa: objeto [`pandas.DataFrame`][] contendo os dados de um arquivo de
+            disseminação de procedimentos ambulatoriais do SIASUS, conforme
+            extraídos para uma unidade federativa e competência (mês) pela
+            função [`extrair_pa()`][].
+
+    Retorna:
+        objeto [`pandas.DataFrame`][] com os registros filtrados.
+
+    [`pandas.DataFrame`]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html
+    [`extrair_pa()`]: impulsoetl.siasus.procedimentos.extrair_pa
+    """
+    # Condições de filtragem
+    condicoes = "(PA_TPUPS == '70') or PA_PROC_ID.str.startswith('030106') or PA_PROC_ID.str.startswith('030107') or PA_PROC_ID.str.startswith('030108') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('X6') or PA_CIDPRI.str.startswith('X7') or PA_CIDPRI.str.contains('^X8[0-4][0-9]*') or PA_CIDPRI.str.startswith('R78') or PA_CIDPRI.str.startswith('T40') or (PA_CIDPRI == 'Y870') or PA_CIDPRI.str.startswith('Y90') or PA_CIDPRI.str.startswith('Y91') or (PA_CBOCOD in ['223905', '223915', '225133', '223550', '239440', '239445', '322220']) or PA_CBOCOD.str.startswith('2515') or (PA_CATEND == '02')"
+
+    logging.info(
+        f"Filtrando DataFrame com {len(pa)} procedimentos "
+        + "ambulatoriais.",
+    )
+    pa_filtrada = pa.query(condicoes, engine="python")
+    logging.info(
+        f"Registros após aplicar filtro: {len(pa_filtrada)}."
+    )
+    return pa_filtrada
+
+
 def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
     ...
@@ -307,6 +337,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
         uf_sigla=uf_sigla,
         periodo_data_inicio=periodo_data_inicio,
     ):
+        df_dados = filtrar_pa(df_dados)
         df_dados_todos.append(df_dados)
         arquivos_capturados.append(arquivo_dbc)
 
