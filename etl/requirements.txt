@@ -4,6 +4,21 @@ dbfread==2.0.7
 more-itertools==10.2.0
 pysus==0.6.0
 
+pyjanitor==0.21.2
+frozendict==2.1.1
+uuid6==2022.6.25
+
+sqlalchemy[mypy]==1.4.27
+psycopg2-binary==2.9.4
+python-dotenv==0.19.2
+
+
+# frozenlist==1.2.0
+# types-frozendict = "0.1.6"
+
+
+
+
 # Big Query
 google-cloud-storage
 
