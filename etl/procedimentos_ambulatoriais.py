@@ -31,14 +31,13 @@ from typing import Generator
 # Utilizado no tratamento
 import janitor
 from frozendict import frozendict
-from utilitarios.datasus_ftp import extrair_dbc_lotes
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
+
+from utilitarios.datasus_ftp import extrair_dbc_lotes
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
-
-
-
+from utilitarios.bd_config import Sessao
 
 from utilitarios.logger_config import logger_config
 
@@ -415,15 +414,15 @@ def transformar_pa(
             dest_column_name="periodo_id",
         )
 
-        # # adicionar id da unidade geografica
-        # .transform_column(
-        #     "unidade_geografica_id_sus",
-        #     function=lambda id_sus: id_sus_para_id_impulso(
-        #         sessao=sessao,
-        #         id_sus=id_sus,
-        #     ),
-        #     dest_column_name="unidade_geografica_id",
-        # )
+        # adicionar id da unidade geografica
+        .transform_column(
+            "unidade_geografica_id_sus",
+            function=lambda id_sus: id_sus_para_id_impulso(
+                sessao=sessao,
+                id_sus=id_sus,
+            ),
+            dest_column_name="unidade_geografica_id",
+        )
 
 
         # adicionar datas de inserção e atualização
@@ -450,17 +449,45 @@ def transformar_pa(
 
 # def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 #     """
-#     ...
+#     Baixa e processa dados de procedimentos ambulatoriais do SIASUS para uma 
+#     determinada Unidade Federativa e período de tempo.
+
+#     Argumentos:
+#         uf_sigla (str): A sigla da Unidade Federativa para a qual os dados de 
+#         procedimentos ambulatoriais serão baixados e processados.
+        
+#         periodo_data_inicio (datetime.date): A data de início do período de 
+#         tempo para o qual os dados serão obtidos. Deve ser fornecida como um 
+#         objeto `datetime.date`.
+
+#     Retorna:
+#         dict: Um dicionário contendo informações sobre o status da operação, 
+#         o estado, o período, o caminho do arquivo final no Google Cloud Storage 
+#         (GCS) e a lista de arquivos originais DBC capturados.
+
+#     A função se conecta ao FTP do DataSUS para obter os arquivos de procedimentos 
+#     ambulatoriais correspondentes à Unidade Federativa e ao período de tempo 
+#     fornecidos. Em seguida, os dados são processados conforme especificações do 
+#     Informe Técnico do SIASUS, incluindo renomeação de colunas, tratamento de 
+#     valores nulos, adição de IDs e datas, entre outros.
+
+#     Após o processamento, os dados são salvos localmente em um arquivo CSV e 
+#     carregados para o Google Cloud Storage (GCS). O caminho do arquivo final 
+#     no GCS e a lista de arquivos originais DBC capturados são incluídos no 
+#     dicionário de retorno, juntamente com informações sobre o estado e o 
+#     período dos dados processados.
 #     """
 
 #     # Extrair dados
 #     df_dados_todos = []
 #     arquivos_capturados = []
+#     session = Sessao()
+
 #     for arquivo_dbc, _, df_dados in extrair_pa(
 #         uf_sigla=uf_sigla,
 #         periodo_data_inicio=periodo_data_inicio,
 #     ):
-#         df_dados = filtrar_pa(df_dados)
+#         df_dados = transformar_pa(session, df_dados)
 #         df_dados_todos.append(df_dados)
 #         arquivos_capturados.append(arquivo_dbc)
 
@@ -487,22 +514,55 @@ def transformar_pa(
 #         "arquivos_origem_dbc": list(set(arquivos_capturados)),
 #     }
 
+#     session.close()
+
 #     return response
 
-def baixar_e_processar_pa(sessao: Session, uf_sigla: str, periodo_data_inicio: datetime.date):
+
+
+def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
-    ...
+    Baixa e processa dados de procedimentos ambulatoriais do SIASUS para uma 
+    determinada Unidade Federativa e período de tempo.
+
+    Argumentos:
+        uf_sigla (str): A sigla da Unidade Federativa para a qual os dados de 
+        procedimentos ambulatoriais serão baixados e processados.
+        
+        periodo_data_inicio (datetime.date): A data de início do período de 
+        tempo para o qual os dados serão obtidos. Deve ser fornecida como um 
+        objeto `datetime.date`.
+
+    Retorna:
+        dict: Um dicionário contendo informações sobre o status da operação, 
+        o estado, o período, o caminho do arquivo final no Google Cloud Storage 
+        (GCS) e a lista de arquivos originais DBC capturados.
+
+    A função se conecta ao FTP do DataSUS para obter os arquivos de procedimentos 
+    ambulatoriais correspondentes à Unidade Federativa e ao período de tempo 
+    fornecidos. Em seguida, os dados são processados conforme especificações do 
+    Informe Técnico do SIASUS, incluindo renomeação de colunas, tratamento de 
+    valores nulos, adição de IDs e datas, entre outros.
+
+    Após o processamento, os dados são salvos localmente em um arquivo CSV e 
+    carregados para o Google Cloud Storage (GCS). O caminho do arquivo final 
+    no GCS e a lista de arquivos originais DBC capturados são incluídos no 
+    dicionário de retorno, juntamente com informações sobre o estado e o 
+    período dos dados processados.
     """
 
     # Extrair dados
     df_dados_todos = []
+    # arquivos_capturados = []
+    session = Sessao()
 
     for df_dados in extrair_pa(
         uf_sigla=uf_sigla,
         periodo_data_inicio=periodo_data_inicio,
     ):
-        df_dados = transformar_pa(sessao, df_dados)
+        df_dados = transformar_pa(session, df_dados)
         df_dados_todos.append(df_dados)
+        # arquivos_capturados.append(arquivo_dbc)
 
     # Concatenar DataFrames
     df_dados_final = pd.concat(df_dados_todos)
@@ -511,13 +571,21 @@ def baixar_e_processar_pa(sessao: Session, uf_sigla: str, periodo_data_inicio: d
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
     df_dados_final.to_csv(nome_arquivo_csv, index=False)
 
+    path_gcs = f"saude-mental/dados-publicos/siasus/{uf_sigla}/{nome_arquivo_csv}"
+    # Salvar no GCS
+    upload_to_bucket(
+        bucket_name="camada-bronze", 
+        blob_path=path_gcs,
+        plain_text=df_dados_final.to_csv()
+    )
 
-    # Response with local file path
     response = {
         "status": "OK",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
-        "arquivo_final_local": nome_arquivo_csv,
+        "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
     }
+
+    session.close()
 
     return response

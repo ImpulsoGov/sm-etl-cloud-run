@@ -1,7 +1,9 @@
 FROM python:3.10
 
-COPY etl/* .
+COPY etl/* etl/
 
-RUN pip install -r requirements.txt
+RUN pip install -r etl/requirements.txt
+
+WORKDIR etl
 
 ENTRYPOINT ["python", "app.py"]
