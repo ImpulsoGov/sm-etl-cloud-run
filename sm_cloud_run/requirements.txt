@@ -12,8 +12,7 @@ sqlalchemy[mypy]==1.4.27
 psycopg2-binary==2.9.4
 python-dotenv==0.19.2
 
-
-# frozenlist==1.2.0
+frozenlist==1.2.0
 # types-frozendict = "0.1.6"
 
 

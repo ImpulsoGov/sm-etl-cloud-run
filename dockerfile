@@ -1,9 +1,9 @@
 FROM python:3.10
 
-COPY etl/* etl/
+COPY sm_cloud_run .
+COPY .env .
 
-RUN pip install -r etl/requirements.txt
-
-WORKDIR etl
+RUN pip install -r requirements.txt
 
 ENTRYPOINT ["python", "app.py"]
+# ENTRYPOINT ["tail", "-f", "/dev/null"]

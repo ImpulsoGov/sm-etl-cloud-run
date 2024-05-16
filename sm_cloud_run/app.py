@@ -3,7 +3,7 @@ import datetime
 
 from flask import Flask, request, jsonify
 
-from procedimentos_ambulatoriais import baixar_e_processar_pa
+from etl.procedimentos_ambulatoriais import baixar_e_processar_pa
 
 app = Flask(__name__)
 

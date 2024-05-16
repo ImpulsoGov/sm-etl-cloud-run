@@ -54,7 +54,6 @@ def upload_to_bucket(bucket_name, blob_path, plain_text):
 logger_config()
 
 
-
 DE_PARA_PA: Final[frozendict] = frozendict(
     {
         "PA_CODUNI": "estabelecimento_id_scnes",
@@ -120,86 +119,9 @@ DE_PARA_PA: Final[frozendict] = frozendict(
     },
 )
 
-TIPOS_PA: Final[frozendict] = frozendict(
-    {
-        "estabelecimento_id_scnes": "object",
-        "gestao_unidade_geografica_id_sus": "object",
-        "gestao_condicao_id_siasus": "object",
-        "unidade_geografica_id_sus": "object",
-        "regra_contratual_id_scnes": "object",
-        "incremento_outros_id_sigtap": "object",
-        "incremento_urgencia_id_sigtap": "object",
-        "estabelecimento_tipo_id_sigtap": "object",
-        "prestador_tipo_id_sigtap": "object",
-        "estabelecimento_mantido": "bool",
-        "estabelecimento_id_cnpj": "object",
-        "mantenedora_id_cnpj": "object",
-        "receptor_credito_id_cnpj": "object",
-        "processamento_periodo_data_inicio": "datetime64[ns]",
-        "realizacao_periodo_data_inicio": "datetime64[ns]",
-        "procedimento_id_sigtap": "object",
-        "financiamento_tipo_id_sigtap": "object",
-        "financiamento_subtipo_id_sigtap": "object",
-        "complexidade_id_siasus": "object",
-        "instrumento_registro_id_siasus": "object",
-        "autorizacao_id_siasus": "object",
-        "profissional_id_cns": "object",
-        "profissional_vinculo_ocupacao_id_cbo2002": "object",
-        "desfecho_motivo_id_siasus": "object",
-        "obito": "bool",
-        "encerramento": "bool",
-        "permanencia": "bool",
-        "alta": "bool",
-        "transferencia": "bool",
-        "condicao_principal_id_cid10": "object",
-        "condicao_secundaria_id_cid10": "object",
-        "condicao_associada_id_cid10": "object",
-        "carater_atendimento_id_siasus": "object",
-        "usuario_idade": "Int64",
-        "procedimento_idade_minima": "Int64",
-        "procedimento_idade_maxima": "Int64",
-        "compatibilidade_idade_id_siasus": "object",
-        "usuario_sexo_id_sigtap": "object",
-        "usuario_raca_cor_id_siasus": "object",
-        "usuario_residencia_municipio_id_sus": "object",
-        "quantidade_apresentada": "Int64",
-        "quantidade_aprovada": "Int64",
-        "valor_apresentado": "Float64",
-        "valor_aprovado": "Float64",
-        "atendimento_residencia_ufs_distintas": "bool",
-        "atendimento_residencia_municipios_distintos": "bool",
-        "procedimento_valor_diferenca_sigtap": "Float64",
-        "procedimento_valor_vpa": "Float64",
-        "procedimento_valor_sigtap": "Float64",
-        "aprovacao_status_id_siasus": "object",
-        "ocorrencia_id_siasus": "object",
-        "erro_quantidade_apresentada_id_siasus": "object",
-        "erro_apac": "object",
-        "usuario_etnia_id_sus": "object",
-        "complemento_valor_federal": "Float64",
-        "complemento_valor_local": "Float64",
-        "incremento_valor": "Float64",
-        "servico_id_sigtap": "object",
-        "servico_classificacao_id_sigtap": "object",
-        "equipe_id_ine": "object",
-        "estabelecimento_natureza_juridica_id_scnes": "object",
-        "id": "object",
-        "periodo_id": "object",
-        "unidade_geografica_id": "object",
-        "criacao_data": "datetime64[ns]",
-        "atualizacao_data": "datetime64[ns]",
-    },
-)
-
 COLUNAS_DATA_AAAAMM: Final[list[str]] = [
     "realizacao_periodo_data_inicio",
     "processamento_periodo_data_inicio",
-]
-
-COLUNAS_NUMERICAS: Final[list[str]] = [
-    nome_coluna
-    for nome_coluna, tipo_coluna in TIPOS_PA.items()
-    if tipo_coluna.lower() == "int64" or tipo_coluna.lower() == "float64"
 ]
 
 
@@ -424,19 +346,10 @@ def transformar_pa(
             dest_column_name="unidade_geografica_id",
         )
 
-
         # adicionar datas de inserção e atualização
         .add_column("criacao_data", agora_gmt_menos3())
         .add_column("atualizacao_data", agora_gmt_menos3())
 
-
-        # # garantir tipos
-        # .change_type(
-        #     # HACK: ver https://github.com/pandas-dev/pandas/issues/25472
-        #     COLUNAS_NUMERICAS,
-        #     "float",
-        # )
-        # .astype(TIPOS_PA)
     )
     memoria_usada = pa_transformada.memory_usage(deep=True).sum() / 10 ** 6
     logging.debug(        
@@ -569,9 +482,9 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     # Salvar localmente
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-    df_dados_final.to_csv(nome_arquivo_csv, index=False)
+    # df_dados_final.to_csv(nome_arquivo_csv, index=False)
 
-    path_gcs = f"saude-mental/dados-publicos/siasus/{uf_sigla}/{nome_arquivo_csv}"
+    path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
     # Salvar no GCS
     upload_to_bucket(
         bucket_name="camada-bronze", 
