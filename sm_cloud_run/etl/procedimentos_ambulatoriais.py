@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+# import os
+# import sys
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+# ###
+
+
 import re
 import shutil
 import logging
@@ -14,7 +21,7 @@ from tempfile import TemporaryDirectory
 from typing import Generator, cast
 from urllib.request import urlopen
 
-import os
+
 import pandas as pd
 import numpy as np
 
@@ -485,6 +492,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     # df_dados_final.to_csv(nome_arquivo_csv, index=False)
 
     path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
+    
     # Salvar no GCS
     upload_to_bucket(
         bucket_name="camada-bronze", 
@@ -502,3 +510,15 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     session.close()
 
     return response
+
+
+# # RODAR LOCALMENTE
+# if __name__ == "__main__":
+#     from datetime import datetime
+
+#     # Define os parâmetros de teste
+#     uf_sigla = "AC"
+#     periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
+
+#     # Chama a função principal com os parâmetros de teste
+#     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
