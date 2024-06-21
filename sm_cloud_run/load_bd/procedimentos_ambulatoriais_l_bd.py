@@ -250,13 +250,13 @@ def inserir_pa_postgres(
 
 
 # RODAR LOCALMENTE
-# if __name__ == "__main__":
-#     from datetime import datetime
+if __name__ == "__main__":
+    from datetime import datetime
 
-#     # Defina os parâmetros de teste
-#     uf_sigla = "AC"
-#     periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
-#     tabela_destino = "dados_publicos.siasus_pa_testeloading"
+    # Defina os parâmetros de teste
+    uf_sigla = "AC"
+    periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
+    tabela_destino = "dados_publicos.siasus_pa_testeloading"
 
-#     # Chame a função principal com os parâmetros de teste
-#     inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)
+    # Chame a função principal com os parâmetros de teste
+    inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)

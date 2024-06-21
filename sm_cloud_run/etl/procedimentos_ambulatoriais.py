@@ -6,34 +6,13 @@ from __future__ import annotations
 # sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
 # ###
 
-
 import re
-import shutil
 import logging
 import datetime
-import argparse
-
-
-from contextlib import closing
-from ftplib import FTP, error_perm  # noqa: B402  # nosec: B402
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Generator, cast
-from urllib.request import urlopen
-
-
-import pandas as pd
 import numpy as np
-
-from dbfread import DBF, FieldParser
-from more_itertools import ichunked
-from pysus.utilities.readdbc import dbc2dbf
-
-from google.cloud import storage
-
-import re
-from ftplib import FTP
+import pandas as pd
 from typing import Generator
+from google.cloud import storage
 
 # Utilizado no tratamento
 import janitor
@@ -41,11 +20,11 @@ from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
 
+# Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_config import Sessao
-
 from utilitarios.logger_config import logger_config
 
 
@@ -512,13 +491,13 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     return response
 
 
-# # RODAR LOCALMENTE
-# if __name__ == "__main__":
-#     from datetime import datetime
+# RODAR LOCALMENTE
+if __name__ == "__main__":
+    from datetime import datetime
 
-#     # Define os parâmetros de teste
-#     uf_sigla = "AC"
-#     periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
+    # Define os parâmetros de teste
+    uf_sigla = "AC"
+    periodo_data_inicio = datetime.strptime("2019-01-01", "%Y-%m-%d").date()
 
-#     # Chama a função principal com os parâmetros de teste
-#     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
+    # Chama a função principal com os parâmetros de teste
+    baixar_e_processar_pa(uf_sigla, periodo_data_inicio)

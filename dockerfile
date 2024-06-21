@@ -6,4 +6,3 @@ COPY .env .
 RUN pip install -r requirements.txt
 
 ENTRYPOINT ["python", "app.py"]
-# ENTRYPOINT ["tail", "-f", "/dev/null"]
