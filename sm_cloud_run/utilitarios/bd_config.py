@@ -24,9 +24,8 @@ from dotenv import load_dotenv
 from psycopg2.extensions import AsIs, register_adapter
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-
-
-
+from google.cloud import secretmanager
+import json
 
 from utilitarios.bd_utilitarios import TabelasRefletidasDicionario
 
@@ -35,11 +34,15 @@ logging.info("Configurando interface com o banco de dados...")
 logging.info("Obtendo parâmetros de conexão com o banco de dados...")
 load_dotenv()
 
-BD_HOST: Final[str] = os.getenv("IMPULSOETL_BD_HOST", "localhost")
-BD_PORTA: Final[int] = int(os.getenv("IMPULSOETL_BD_PORTA", "5432"))
-BD_NOME: Final[str] = os.getenv("IMPULSOETL_BD_NOME", "principal")
-BD_USUARIO: Final[str] = os.getenv("IMPULSOETL_BD_USUARIO", "etl")
-BD_SENHA: Final[str | None] = os.getenv("IMPULSOETL_BD_SENHA", None)
+chave = "projects/567502497958/secrets/acesso_banco_analitico_saude_mental/versions/latest"
+client = secretmanager.SecretManagerServiceClient()
+response = client.access_secret_version(name=chave)
+
+BD_HOST: Final[str] = json.loads(response.payload.data.decode("UTF-8"))["IMPULSOETL_BD_HOST"]
+BD_PORTA: Final[int] = json.loads(response.payload.data.decode("UTF-8"))["IMPULSOETL_BD_PORTA"]
+BD_NOME: Final[str] = json.loads(response.payload.data.decode("UTF-8"))["IMPULSOETL_BD_NOME"]
+BD_USUARIO: Final[str] = json.loads(response.payload.data.decode("UTF-8"))["IMPULSOETL_BD_USUARIO"]
+BD_SENHA: Final[str] = json.loads(response.payload.data.decode("UTF-8"))["IMPULSOETL_BD_SENHA"]
 
 BD_URL: Final[sa.engine.URL] = sa.engine.URL.create(
     drivername="postgresql+psycopg2",
