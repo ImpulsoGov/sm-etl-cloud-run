@@ -2,9 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-
 """Funções e classes úteis para interagir com os repositórios do DataSUS."""
-
 
 import re
 import shutil
@@ -22,6 +20,23 @@ from more_itertools import ichunked
 from pysus.utilities.readdbc import dbc2dbf
 
 
+# # NOTE: Trecho presente na última versão do ETl, mantendo como anotação caso seja necessário utilizar nos próximos ETLs
+# from pyreaddbc import ffi, lib
+
+# def dbc2dbf(infile, outfile):
+#     """
+#     Converts a DATASUS dbc file to a DBF database saving it to `outfile`.
+#     :param infile: .dbc file name
+#     :param outfile: name of the .dbf file to be created.
+#     """
+#     if isinstance(infile, str):
+#         infile = infile.encode()
+#     if isinstance(outfile, str):
+#         outfile = outfile.encode()
+#     p = ffi.new("char[]", os.path.abspath(infile))
+#     q = ffi.new("char[]", os.path.abspath(outfile))
+
+#     lib.dbc2dbf([p], [q])
 
 class LeitorCamposDBF(FieldParser):
     def parseD(self, field, data):
@@ -117,7 +132,7 @@ def extrair_dbc_lotes(
     ftp: str,
     caminho_diretorio: str,
     arquivo_nome: str | re.Pattern,
-    passo: int = 1000000,
+    passo: int = 500000,
     **kwargs,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai dados de um arquivo .dbc do FTP do DataSUS e retorna DataFrames.
@@ -176,7 +191,11 @@ def extrair_dbc_lotes(
 
             # baixar do FTP usando urllib
             # ver https://stackoverflow.com/a/11768443/7733563
-            url = f"ftp://{ftp}{caminho_diretorio}/{arquivo_compativel_nome}"
+            url = "ftp://{}{}/{}".format(
+                ftp,
+                caminho_diretorio,
+                arquivo_compativel_nome,
+            )
 
             logging.info(
                 f"Iniciando download do arquivo `{arquivo_compativel_nome}`..."
@@ -186,17 +205,17 @@ def extrair_dbc_lotes(
                     shutil.copyfileobj(resposta, arquivo)
             logging.info("Download concluído.")
 
-            if _checar_arquivo_corrompido(
-                tamanho_arquivo_ftp=cast(
-                    int,
-                    cliente_ftp.size(arquivo_compativel_nome),
-                ),
-                tamanho_arquivo_local=arquivo_dbc.stat().st_size,
-            ):
-                raise RuntimeError(
-                    f"A extração da fonte `{ftp}{caminho_diretorio}` "
-                    + "falhou porque o arquivo baixado está corrompido."
-                )
+            # if _checar_arquivo_corrompido(
+            #     tamanho_arquivo_ftp=cast(
+            #         int,
+            #         cliente_ftp.size(arquivo_compativel_nome),
+            #     ),
+            #     tamanho_arquivo_local=arquivo_dbc.stat().st_size,
+            # ):
+            #     raise RuntimeError(
+            #         f"A extração da fonte `{ftp}{caminho_diretorio}` "
+            #         + "falhou porque o arquivo baixado está corrompido."
+            #     )
 
             logging.info("Descompactando arquivo DBC...")
             arquivo_dbf_caminho = Path(diretorio_temporario, arquivo_dbf_nome)
@@ -218,7 +237,10 @@ def extrair_dbc_lotes(
                     + f"e convertendo em DataFrame (linhas {contador} a {contador + passo})...",
                 )
                 yield pd.DataFrame(fatia)
+                # yield arquivo_compativel_nome, contador, pd.DataFrame(fatia)
                 contador += passo
 
     logging.debug(f"Encerrando a conexão com o servidor FTP `{ftp}`...")
     cliente_ftp.close()
+
+

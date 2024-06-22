@@ -1,27 +1,26 @@
 from __future__ import annotations
 
-# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
-# import os
-# import sys
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
-# ###
+# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+###
 
 import os
 import pandas as pd
 import numpy as np
 import logging
 import datetime
-from io import StringIO
-
-from google.cloud import storage
 
 import janitor
 from frozendict import frozendict
 from sqlalchemy.orm import Session
 from utilitarios.bd_config import Sessao, tabelas
 
-from utilitarios.logger_config import logger_config
+from utilitarios.cloud_storage import download_from_bucket
 from utilitarios.bd_utilitarios import carregar_dataframe
+from utilitarios.logger_config import logger_config
+
 
 # set up logging to file
 logger_config()
@@ -104,17 +103,6 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
 ]
 
 
-# Baixa arquivo do GCS
-def download_csv_from_gcs(bucket_name, blob_path):
-    """
-    Baixa um arquivo CSV do Google Cloud Storage e retorna como um objeto dataframe do pandas.
-    """
-    bucket = storage.Client().bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    content = blob.download_as_text()
-    pa = pd.read_csv(StringIO(content), dtype=str, index_col=0)
-    return pa
-
 def transformar_tipos(
     sessao: Session,
     pa: pd.DataFrame,
@@ -134,25 +122,12 @@ def transformar_tipos(
         )
         .astype(TIPOS_PA)
     )
-    memoria_usada = pa_transformada.memory_usage(deep=True).sum() / 10 ** 6
-    logging.debug(        
-        f"Memória ocupada pelo DataFrame transformado: {memoria_usada:.2f} mB."
-    )
     return pa_transformada
 
 def validar_pa(pa_transformada: pd.DataFrame) -> pd.DataFrame:
     assert isinstance(pa_transformada, pd.DataFrame), "Não é um DataFrame"
     assert len(pa_transformada) > 0, "DataFrame vazio."
-    nulos_por_coluna = pa_transformada.applymap(pd.isna).sum()
-    assert nulos_por_coluna["quantidade_apresentada"] == 0, (
-        "A quantidade apresentada é um valor nulo."
-    )
-    assert nulos_por_coluna["quantidade_aprovada"] == 0, (
-        "A quantidade aprovada é um valor nulo."
-    )
-    assert nulos_por_coluna["realizacao_periodo_data_inicio"] == 0, (
-        "A competência de realização é um valor nulo."
-    )
+
 
 def inserir_pa_postgres(
     uf_sigla: str,
@@ -165,7 +140,7 @@ def inserir_pa_postgres(
         # Baixar CSV do GCS e carregar em um DataFrame
         path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"    
         
-        pa = download_csv_from_gcs(
+        pa = download_from_bucket(
             bucket_name="camada-bronze", 
             blob_path=path_gcs)
         
@@ -191,8 +166,9 @@ def inserir_pa_postgres(
                                 + "data de processamento que já foi inserida na tabela destino.")            
 
 
-        # Obtem tamanho do lote de processamento
-        passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
+        # Tamanho do lote de processamento
+        # passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
+        passo = 100000
 
         # Divide o DataFrame em lotes
         num_lotes = len(pa) // passo + 1
@@ -255,7 +231,7 @@ if __name__ == "__main__":
 
     # Defina os parâmetros de teste
     uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
+    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
     tabela_destino = "dados_publicos.siasus_pa_testeloading"
 
     # Chame a função principal com os parâmetros de teste

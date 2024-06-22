@@ -194,10 +194,8 @@ def carregar_dataframe(
     schema_nome, tabela_nome = tabela_destino.split(".", maxsplit=1)
 
     logging.info(
-        "Carregando {num_registros} registros de procedimentos ambulatoriais "
-        "para a tabela `{tabela_destino}`...",
-        num_registros=num_registros,
-        tabela_destino=tabela_destino,
+        f"Carregando {num_registros} registros de procedimentos ambulatoriais "
+        + f"para a tabela `{tabela_destino}`..."
     )
 
     logging.debug("Formatando colunas de data...")
@@ -242,6 +240,6 @@ def carregar_dataframe(
     else:
         ponto_de_recuperacao.commit()
 
-    logging.info("Carregamento concluído.")
+    logging.info(f"Carregamento concluído em {tabela_destino}.")
 
     return 0

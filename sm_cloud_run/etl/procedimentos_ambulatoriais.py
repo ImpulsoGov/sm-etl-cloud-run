@@ -12,7 +12,6 @@ import datetime
 import numpy as np
 import pandas as pd
 from typing import Generator
-from google.cloud import storage
 
 # Utilizado no tratamento
 import janitor
@@ -25,18 +24,10 @@ from utilitarios.datasus_ftp import extrair_dbc_lotes
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_config import Sessao
+from utilitarios.cloud_storage import upload_to_bucket
 from utilitarios.logger_config import logger_config
 
 
-# Para inserir resultados no GCS
-def upload_to_bucket(bucket_name, blob_path, plain_text):
-    bucket = storage.Client().bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    url = blob.upload_from_string(plain_text.encode('utf8'))
-    return url
-
-
-# set up logging to file
 logger_config()
 
 
@@ -124,7 +115,7 @@ def _para_booleano(valor: str) -> bool | float:
 def extrair_pa(
     uf_sigla: str,
     periodo_data_inicio: datetime.date,
-    passo: int = 100000,
+    passo: int = 500000,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai registros de procedimentos ambulatoriais do FTP do DataSUS.
 
@@ -344,79 +335,19 @@ def transformar_pa(
     return pa_transformada
 
 
-
-
-# def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
-#     """
-#     Baixa e processa dados de procedimentos ambulatoriais do SIASUS para uma 
-#     determinada Unidade Federativa e período de tempo.
-
-#     Argumentos:
-#         uf_sigla (str): A sigla da Unidade Federativa para a qual os dados de 
-#         procedimentos ambulatoriais serão baixados e processados.
-        
-#         periodo_data_inicio (datetime.date): A data de início do período de 
-#         tempo para o qual os dados serão obtidos. Deve ser fornecida como um 
-#         objeto `datetime.date`.
-
-#     Retorna:
-#         dict: Um dicionário contendo informações sobre o status da operação, 
-#         o estado, o período, o caminho do arquivo final no Google Cloud Storage 
-#         (GCS) e a lista de arquivos originais DBC capturados.
-
-#     A função se conecta ao FTP do DataSUS para obter os arquivos de procedimentos 
-#     ambulatoriais correspondentes à Unidade Federativa e ao período de tempo 
-#     fornecidos. Em seguida, os dados são processados conforme especificações do 
-#     Informe Técnico do SIASUS, incluindo renomeação de colunas, tratamento de 
-#     valores nulos, adição de IDs e datas, entre outros.
-
-#     Após o processamento, os dados são salvos localmente em um arquivo CSV e 
-#     carregados para o Google Cloud Storage (GCS). O caminho do arquivo final 
-#     no GCS e a lista de arquivos originais DBC capturados são incluídos no 
-#     dicionário de retorno, juntamente com informações sobre o estado e o 
-#     período dos dados processados.
-#     """
-
-#     # Extrair dados
-#     df_dados_todos = []
-#     arquivos_capturados = []
-#     session = Sessao()
-
-#     for arquivo_dbc, _, df_dados in extrair_pa(
-#         uf_sigla=uf_sigla,
-#         periodo_data_inicio=periodo_data_inicio,
-#     ):
-#         df_dados = transformar_pa(session, df_dados)
-#         df_dados_todos.append(df_dados)
-#         arquivos_capturados.append(arquivo_dbc)
-
-#     # Concatenar DataFrames
-#     df_dados_final = pd.concat(df_dados_todos)
-
-#     # Salvar localmente
-#     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-#     df_dados_final.to_csv(nome_arquivo_csv, index=False)
-
-#     path_gcs = f"saude-mental/dados-publicos/siasus/{uf_sigla}/{nome_arquivo_csv}"
-#     # Salvar no GCS
-#     upload_to_bucket(
-#         bucket_name="camada-bronze", 
-#         blob_path=path_gcs,
-#         plain_text=df_dados_final.to_csv()
-#     )
-
-#     response = {
-#         "status": "OK",
-#         "estado": uf_sigla,
-#         "periodo": f"{periodo_data_inicio:%y%m}",
-#         "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
-#         "arquivos_origem_dbc": list(set(arquivos_capturados)),
-#     }
-
-#     session.close()
-
-#     return response
-
+def validar_pa(pa_transformada: pd.DataFrame) -> pd.DataFrame:
+    assert isinstance(pa_transformada, pd.DataFrame), "Não é um DataFrame"
+    assert len(pa_transformada) > 0, "DataFrame vazio."
+    nulos_por_coluna = pa_transformada.applymap(pd.isna).sum()
+    assert nulos_por_coluna["quantidade_apresentada"] == 0, (
+        "A quantidade apresentada é um valor nulo."
+    )
+    assert nulos_por_coluna["quantidade_aprovada"] == 0, (
+        "A quantidade aprovada é um valor nulo."
+    )
+    assert nulos_por_coluna["realizacao_periodo_data_inicio"] == 0, (
+        "A competência de realização é um valor nulo."
+    )
 
 
 def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
@@ -451,42 +382,60 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
 
     # Extrair dados
-    df_dados_todos = []
-    # arquivos_capturados = []
     session = Sessao()
 
-    for df_dados in extrair_pa(
+    pa_lotes = extrair_pa(
         uf_sigla=uf_sigla,
         periodo_data_inicio=periodo_data_inicio,
-    ):
-        df_dados = transformar_pa(session, df_dados)
-        df_dados_todos.append(df_dados)
-        # arquivos_capturados.append(arquivo_dbc)
+    )
 
-    # Concatenar DataFrames
-    df_dados_final = pd.concat(df_dados_todos)
+    dfs_transformados = []
+    contador = 0
 
-    # Salvar localmente
-    nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-    # df_dados_final.to_csv(nome_arquivo_csv, index=False)
+    for pa_lote in pa_lotes:
+        pa_transformada = transformar_pa(
+            sessao=session,
+            pa=pa_lote,
+        )
+        try: 
+            validar_pa(pa_transformada)
+        except AssertionError as mensagem:
+            raise RuntimeError(
+                "Dados inválidos encontrados após a transformação:"
+                + " {}".format(mensagem),
+            )
+        else: 
+            dfs_transformados.append(pa_transformada)
+            contador += len(pa_transformada)
 
-    path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
+    logging.info("Concatenando lotes de dataframes transformados e validados.")
+    df_final = pd.concat(dfs_transformados, ignore_index=True)    
     
     # Salvar no GCS
+    logging.info("Realizando upload para bucket do GCS.")
+    nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
+        # Salvar localmente: df_final.to_csv(nome_arquivo_csv, index=False)
+    path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
-        plain_text=df_dados_final.to_csv()
+        plain_text=df_final.to_csv()
     )
 
     response = {
         "status": "OK",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
+        "num_registros": {contador},
         "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
     }
 
-    session.close()
+    logging.info(
+        f"Processamento de PA finalizado para {uf_sigla} ({periodo_data_inicio:%y%m})."
+        f"Status: {response['status']}, Número de registros: {response['num_registros']}, Arquivo GCS: {response['arquivo_final_gcs']}"
+    )
+
+    session.close()    
 
     return response
 
@@ -496,8 +445,8 @@ if __name__ == "__main__":
     from datetime import datetime
 
     # Define os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2019-01-01", "%Y-%m-%d").date()
+    uf_sigla = "RJ"
+    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
