@@ -1,12 +1,12 @@
+import sys
 import logging
 
 def logger_config():
-    # Configuração do formato da mensagem de log
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+        
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-                        datefmt='%m-%d %H:%M')    
-    # Criação do manipulador de fluxo para exibir mensagens de log no console
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)    
-    # Adiciona o manipulador de fluxo ao logger raiz
-    logging.getLogger('').addHandler(console)
+                        datefmt='%m-%d %H:%M',
+                        handlers=[logging.StreamHandler(sys.stdout)])  # Ensure it prints to terminal
+
