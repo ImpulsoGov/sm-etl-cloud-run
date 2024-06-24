@@ -11,7 +11,7 @@ import logging
 import datetime
 import numpy as np
 import pandas as pd
-from typing import Generator
+from typing import Generator, Final
 
 # Utilizado no tratamento
 import janitor
@@ -410,23 +410,25 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     logging.info("Concatenando lotes de dataframes transformados e validados.")
     df_final = pd.concat(dfs_transformados, ignore_index=True)    
+    logging.info(f"{contador} registros concatenados no dataframe.")
     
     # Salvar no GCS
-    logging.info("Realizando upload para bucket do GCS.")
+    logging.info("Realizando upload para bucket do GCS...")
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-        # Salvar localmente: df_final.to_csv(nome_arquivo_csv, index=False)
     path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
+    
+
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
-        plain_text=df_final.to_csv()
+        dados=df_final.to_csv(index=False)
     )
 
     response = {
         "status": "OK",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
-        "num_registros": {contador},
+        "num_registros": contador,
         "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
     }
 
@@ -440,13 +442,14 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     return response
 
 
+
 # RODAR LOCALMENTE
 if __name__ == "__main__":
     from datetime import datetime
 
     # Define os parâmetros de teste
-    uf_sigla = "RJ"
-    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
+    uf_sigla = "AC"
+    periodo_data_inicio = datetime.strptime("2023-12-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
