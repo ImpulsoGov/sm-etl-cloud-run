@@ -1,6 +1,7 @@
 FROM python:3.10
 
-COPY etl/* .
+COPY sm_cloud_run .
+COPY .env .
 
 RUN pip install -r requirements.txt
 
