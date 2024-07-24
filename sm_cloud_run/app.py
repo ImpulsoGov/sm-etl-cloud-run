@@ -3,10 +3,25 @@ import datetime
 
 from flask import Flask, request, jsonify
 
-from etl.procedimentos_ambulatoriais import baixar_e_processar_pa
-from load_bd.procedimentos_ambulatoriais_l_bd import inserir_pa_postgres
+
+from etl.datasus_ftp_metadados import upsert_dados_no_postgres
+
+from etl.siasus_procedimentos_ambulatoriais import baixar_e_processar_pa
+from load_bd.siasus_procedimentos_ambulatoriais_l_bd import inserir_pa_postgres
+
+from etl.siasus_bpa_individualizado import baixar_e_processar_bpa_i
+from load_bd.siasus_bpa_individualizado_l_bd import inserir_bpa_i_postgres
 
 app = Flask(__name__)
+
+
+@app.route("/ftp_metadados", methods=['POST'])
+def ftp_metadados():
+    content_type = request.headers.get('Content-Type')
+    if (content_type != 'application/json'):
+        return 'Erro, content-type deve ser json', 400
+
+    return jsonify(upsert_dados_no_postgres())
 
 
 @app.route("/pa", methods=['POST'])
@@ -35,17 +50,30 @@ def load_pa():
     return jsonify(inserir_pa_postgres(json_params['UF'], data_datetime, json_params['tabela_destino']))
 
 
-# @app.route("/bpai", methods=['POST'])
-# def sm_bpai():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type == 'application/json'):
-#         json_params = request.json
-#     else:
-#         return 'Erro, content-type deve ser json', 400
+@app.route("/bpa_i", methods=['POST'])
+def sm_bpa_i():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
 
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-#     return jsonify(baixar_e_processar_bpai(json_params['UF'], data_datetime))
+    return jsonify(baixar_e_processar_bpa_i(json_params['UF'], data_datetime))
+
+
+@app.route("/bpa_i_postgres", methods=['POST'])
+def load_bpa_i():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
+
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+
+    return jsonify(inserir_bpa_i_postgres(json_params['UF'], data_datetime, json_params['tabela_destino']))
 
 
 
