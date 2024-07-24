@@ -18,6 +18,7 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
+from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
@@ -190,16 +191,25 @@ def transformar_pa(
         f"Memória ocupada pelo DataFrame original:  {memoria_usada:.2f} mB."
     )
 
+
+    # aplica filtragem para municípios participantes (procedimento registrado no muni ou paciente residente no muni)
+    filtragem_municipios = f"(PA_UFMUN in {municipios_painel}) or (PA_MUNPCN in {municipios_painel})"
+    pa = pa.query(filtragem_municipios, engine="python")
+    logging.info(
+        f"Registros após aplicar filtro de seleção de municípios: {len(pa)}."
+    )
+
+
     # aplica condições de filtragem dos registros
-    condicoes = "(PA_TPUPS == '70') or PA_PROC_ID.str.startswith('030106') or PA_PROC_ID.str.startswith('030107') or PA_PROC_ID.str.startswith('030108') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('X6') or PA_CIDPRI.str.startswith('X7') or PA_CIDPRI.str.contains('^X8[0-4][0-9]*') or PA_CIDPRI.str.startswith('R78') or PA_CIDPRI.str.startswith('T40') or (PA_CIDPRI == 'Y870') or PA_CIDPRI.str.startswith('Y90') or PA_CIDPRI.str.startswith('Y91') or (PA_CBOCOD in ['223905', '223915', '225133', '223550', '239440', '239445', '322220']) or PA_CBOCOD.str.startswith('2515') or (PA_CATEND == '02')"
     logging.info(
         f"Filtrando DataFrame com {len(pa)} procedimentos "
         + "ambulatoriais.",
     )
-    pa = pa.query(condicoes, engine="python")
+    pa = pa.query(condicoes_pa, engine="python")
     logging.info(
-        f"Registros após aplicar filtro: {len(pa)}."
+        f"Registros após aplicar filtro de condições de saúde mental: {len(pa)}."
     )
+
 
     pa_transformada = (
         pa  # noqa: WPS221  # ignorar linha complexa no pipeline
@@ -337,7 +347,7 @@ def transformar_pa(
 
 def validar_pa(pa_transformada: pd.DataFrame) -> pd.DataFrame:
     assert isinstance(pa_transformada, pd.DataFrame), "Não é um DataFrame"
-    assert len(pa_transformada) > 0, "DataFrame vazio."
+    # assert len(pa_transformada) > 0, "DataFrame vazio."
     nulos_por_coluna = pa_transformada.applymap(pd.isna).sum()
     assert nulos_por_coluna["quantidade_apresentada"] == 0, (
         "A quantidade apresentada é um valor nulo."
@@ -448,8 +458,8 @@ if __name__ == "__main__":
     from datetime import datetime
 
     # Define os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-12-01", "%Y-%m-%d").date()
+    uf_sigla = "AL"
+    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
