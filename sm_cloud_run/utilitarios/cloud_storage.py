@@ -26,7 +26,7 @@ def upload_to_bucket(bucket_name, blob_path, dados):
     blob = bucket.blob(blob_path)
 
     with io.BytesIO(dados.encode('utf8')) as file_obj:
-        blob.upload_from_file(file_obj, content_type='text/plain')
+        blob.upload_from_file(file_obj, content_type='text/plain', timeout=3600)
 
     url = f"gs://{bucket_name}/{blob_path}"
     return url

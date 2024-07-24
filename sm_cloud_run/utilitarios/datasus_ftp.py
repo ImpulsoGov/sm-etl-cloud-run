@@ -132,7 +132,7 @@ def extrair_dbc_lotes(
     ftp: str,
     caminho_diretorio: str,
     arquivo_nome: str | re.Pattern,
-    passo: int = 500000,
+    passo: int = 50000,
     **kwargs,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai dados de um arquivo .dbc do FTP do DataSUS e retorna DataFrames.
