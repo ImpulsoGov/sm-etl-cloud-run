@@ -21,6 +21,7 @@ from utilitarios.config_painel_sm import estados_painel
 import logging
 
 
+
 # Adaptar pd.NA
 def adapt_pd_na(na):
     return AsIs('NULL')
@@ -35,22 +36,6 @@ logger_config()
 
 TIPOS_METADADOS_FTP: Final[frozendict] = frozendict(
     {
-        "tamanho": "int64",
-        "nome": "object",	
-        "tipo": "object",		
-        "sigla_uf": "object",		
-        "ano": "object",		
-        "mes": "object",		
-        "particao": "object",		
-        "processamento_periodo_data_inicio": "datetime64[ns]",	
-        "timestamp_update_etl": "datetime64[ns]",	
-        "timestamp_modificacao_ftp": "datetime64[ns]",	
-        "timestamp_execucao_airflow": "datetime64[ns]",
-    },
-)
-
-TIPOS_METADADOS_FTP: Final[frozendict] = frozendict(
-    {
         "tipo": "object",		
         "sigla_uf": "object",
         "ano": "object",		
@@ -60,8 +45,9 @@ TIPOS_METADADOS_FTP: Final[frozendict] = frozendict(
         "tamanho": "int64",
         "processamento_periodo_data_inicio": "datetime64[ns]",	
         "timestamp_modificacao_ftp": "datetime64[ns]",	
-        "timestamp_update_etl": "datetime64[ns]",
-        "timestamp_execucao_airflow": "datetime64[ns]",
+        "timestamp_etl_ftp_metadados": "datetime64[ns]",
+        "timestamp_etl_gcs": "datetime64[ns]",
+        "timestamp_load_bd": "datetime64[ns]"
     },
 )
 
@@ -81,8 +67,9 @@ COLUNAS_ORDEM = [
   'tamanho', 
   'processamento_periodo_data_inicio', 
   'timestamp_modificacao_ftp', 
-  'timestamp_update_etl', 
-  'timestamp_execucao_airflow'
+  'timestamp_etl_ftp_metadados', 
+  'timestamp_etl_gcs',
+  'timestamp_load_bd'
 ]
 
 Base = declarative_base()
@@ -99,8 +86,9 @@ class MetaData(Base):
     tamanho = Column(Integer)
     processamento_periodo_data_inicio = Column(Date)
     timestamp_modificacao_ftp = Column(DateTime)
-    timestamp_update_etl = Column(DateTime)
-    timestamp_execucao_airflow = Column(DateTime)
+    timestamp_etl_ftp_metadados = Column(DateTime)
+    timestamp_etl_gcs = Column(DateTime)
+    timestamp_load_bd = Column(DateTime)
 
 def extrair_metadados_ftp(diretorio: str, prefixos: tuple): 
     """
@@ -164,8 +152,9 @@ def processar_particoes(df):
             tamanho=('tamanho', 'sum'),
             processamento_periodo_data_inicio=('processamento_periodo_data_inicio', 'first'),
             timestamp_modificacao_ftp=('timestamp_modificacao_ftp', 'max'),
-            timestamp_update_etl=('timestamp_update_etl', 'max'),
-            timestamp_execucao_airflow=('timestamp_execucao_airflow', 'min')
+            timestamp_etl_ftp_metadados=('timestamp_etl_ftp_metadados', 'max'),
+            timestamp_etl_gcs=('timestamp_etl_gcs', 'min'),
+            timestamp_load_bd=('timestamp_load_bd', 'min')
         ).reset_index()
         return pd.concat([sem_particoes, com_particoes_grouped], ignore_index=True)
     
@@ -196,19 +185,13 @@ def transformar_metadados(
             mes=metadados_combinados['nome'].str[6:8],
             particao=metadados_combinados['nome'].str.extract(r'^\w{8}(.*)\.dbc$')[0].replace('', pd.NA),
             processamento_periodo_data_inicio=metadados_combinados['nome'].str[4:6] + metadados_combinados['nome'].str[6:8],
-            timestamp_update_etl=agora_gmt_menos3().strftime("%Y-%m-%d %H:%M:%S"),
             timestamp_modificacao_ftp=pd.to_datetime(
                 metadados_combinados['data_modificacao_ftp'].astype(str) + ' ' + metadados_combinados['hora'],
                 format='%m-%d-%y %I:%M%p'
             ),
-            timestamp_execucao_airflow=pd.NA, 
-            
-            # # Adiciona hash baseado em tipo de ETL, UF, ano, mês e partição (quando há)
-            # hex_id=lambda x: x.apply(
-            #     lambda row: hashlib.md5(
-            #         f"{row['tipo']}{row['sigla_uf']}{row['ano']}{row['mes']}{row['particao']}".encode('utf-8')
-            #     ).hexdigest(), axis=1
-            #   )
+            timestamp_etl_ftp_metadados=agora_gmt_menos3().strftime("%Y-%m-%d %H:%M:%S"),            
+            timestamp_etl_gcs=pd.NA, 
+            timestamp_load_bd=pd.NA,
         )
         .assign(
             processamento_periodo_data_inicio=lambda x: pd.to_datetime(x['processamento_periodo_data_inicio'], format="%y%m", errors="coerce"),
@@ -332,16 +315,17 @@ def upsert_dados_no_postgres():
                         # 'mes': row['mes'],
                         'particao': row['particao'],
                         'tamanho': row['tamanho'], 
-                        'processamento_periodo_data_inicio': row['processamento_periodo_data_inicio'],
+                        # 'processamento_periodo_data_inicio': row['processamento_periodo_data_inicio'],
                         'timestamp_modificacao_ftp': row['timestamp_modificacao_ftp'],
-                        'timestamp_update_etl': row['timestamp_update_etl'],                        
-                        'timestamp_execucao_airflow': row['timestamp_execucao_airflow']
+                        'timestamp_etl_ftp_metadados': row['timestamp_etl_ftp_metadados'],                        
+                        # 'timestamp_etl_gcs': row['timestamp_etl_gcs']
+                        # 'timestamp_load_bd': row['timestamp_load_bd']
                     })
                     linhas_modificadas += 1
-                # Se os arquivos do FTP estão com data de modificação igual a da última vez que buscamos, atualiza apenas a coluna timestamp_update_etl
+                # Se os arquivos do FTP estão com data de modificação igual a da última vez que buscamos, atualiza apenas a coluna timestamp_etl_ftp_metadados
                 elif nomes_existentes.timestamp_modificacao_ftp == row['timestamp_modificacao_ftp']:
                     sessao.query(tabela_fonte).filter_by(nome=row['nome']).update({
-                        'timestamp_update_etl': row['timestamp_update_etl']
+                        'timestamp_etl_ftp_metadados': row['timestamp_etl_ftp_metadados']
                     })
                     linhas_atualizadas += 1
                     
@@ -356,8 +340,9 @@ def upsert_dados_no_postgres():
                     tamanho=row['tamanho'],
                     processamento_periodo_data_inicio=row['processamento_periodo_data_inicio'],
                     timestamp_modificacao_ftp=row['timestamp_modificacao_ftp'],
-                    timestamp_update_etl=row['timestamp_update_etl'],
-                    timestamp_execucao_airflow=row['timestamp_execucao_airflow']
+                    timestamp_etl_ftp_metadados=row['timestamp_etl_ftp_metadados'],
+                    timestamp_etl_gcs=row['timestamp_etl_gcs'],
+                    timestamp_load_bd=row['timestamp_load_bd']
                 )
                 sessao.add(nova_entrada)
                 linhas_inseridas += 1
@@ -393,38 +378,6 @@ def upsert_dados_no_postgres():
     )
 
     return response
-
-    
-
-
-
-# from utilitarios.bd_utilitarios import carregar_dataframe
-# def upload_dataframe():
-#     """
-    
-#     """
-    
-#     # Generate the dataframe
-#     dados = obter_metadados_combinados()
-#     tabela_destino = 'saude_mental.sm_metadados_ftp'
-
-#     # Use the session context manager to handle the session lifecycle
-#     with Sessao() as session:
-#         logging.info("Conexão aberta com o banco postgres...")
-#         # Call the carregar_dataframe function to upload the dataframe
-
-#         logging.info("Iniciando carregamento de DataFrame no banco...")
-#         carregamento_status = carregar_dataframe(session, dados, tabela_destino)
-
-#         # Commit the transaction if successful
-#         if carregamento_status != 0:
-#             session.rollback()
-#             raise RuntimeError(
-#                 "Execução interrompida em razão de um erro no carregamento."
-#             )
-#         else:
-#             session.commit()
-#             print(f"Dataframe carregado com sucesso para a tabela '{tabela_destino}'.")
 
 
 if __name__ == "__main__":
