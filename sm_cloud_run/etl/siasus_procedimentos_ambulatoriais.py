@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
-# import os
-# import sys
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
-# ###
+# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+###
 
 import re
 import logging
@@ -18,7 +18,7 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
-from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
+from utilitarios.config_painel_sm import municipios_painel, condicoes_pa, inserir_timestamp_ftp_metadados
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
@@ -152,6 +152,8 @@ def extrair_pa(
 def transformar_pa(
     sessao: Session,
     pa: pd.DataFrame,
+    uf_sigla: str,
+    periodo_data_inicio: datetime.date,
 ) -> pd.DataFrame:
     """Transforma um `DataFrame` de procedimentos ambulatoriais do SIASUS.
     
@@ -337,6 +339,12 @@ def transformar_pa(
         .add_column("criacao_data", agora_gmt_menos3())
         .add_column("atualizacao_data", agora_gmt_menos3())
 
+        # adicionar coluna ftp_arquivo_nome
+        .add_column(
+            "ftp_arquivo_nome",
+            f"PA{uf_sigla}{periodo_data_inicio:%y%m}"
+        )
+
     )
     memoria_usada = pa_transformada.memory_usage(deep=True).sum() / 10 ** 6
     logging.debug(        
@@ -392,7 +400,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
 
     # Extrair dados
-    session = Sessao()
+    sessao = Sessao()
 
     pa_lotes = extrair_pa(
         uf_sigla=uf_sigla,
@@ -404,8 +412,10 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     for pa_lote in pa_lotes:
         pa_transformada = transformar_pa(
-            sessao=session,
+            sessao=sessao,
             pa=pa_lote,
+            uf_sigla=uf_sigla,
+            periodo_data_inicio=periodo_data_inicio,
         )
         try: 
             validar_pa(pa_transformada)
@@ -427,13 +437,25 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
     path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
     
-
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
         dados=df_final.to_csv(index=False)
     )
 
+
+    # Registrar na tabela de metadados do FTP
+    logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+    inserir_timestamp_ftp_metadados(
+        sessao, 
+        uf_sigla, 
+        periodo_data_inicio, 
+        coluna_atualizar='timestamp_etl_gcs',
+        tipo='PA'
+    )
+
+
+    # Obter sumário de resposta
     response = {
         "status": "OK",
         "estado": uf_sigla,
@@ -447,7 +469,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
         f"Status: {response['status']}, Número de registros: {response['num_registros']}, Arquivo GCS: {response['arquivo_final_gcs']}"
     )
 
-    session.close()    
+    sessao.close()    
 
     return response
 
@@ -459,7 +481,7 @@ if __name__ == "__main__":
 
     # Define os parâmetros de teste
     uf_sigla = "AL"
-    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
+    periodo_data_inicio = datetime.strptime("2024-02-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
