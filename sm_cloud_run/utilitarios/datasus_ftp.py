@@ -114,6 +114,17 @@ def _listar_arquivos(
             if arquivo == arquivo_nome_ou_padrao
         ]
 
+    # Checar por arquivos particionados e não particionados em BPA
+    unpartitioned_files = [
+        arquivo for arquivo in arquivos_compativeis if not re.search(r"_\d+\.dbc$", arquivo)
+    ]
+    partitioned_files = [
+        arquivo for arquivo in arquivos_compativeis if re.search(r"_\d+\.dbc$", arquivo)
+    ]
+    if unpartitioned_files and partitioned_files:
+        # Ignorar arquivos não particionados se existirem
+        arquivos_compativeis = partitioned_files
+
     arquivos_compativeis_num = len(arquivos_compativeis)
     if arquivos_compativeis_num > 0:
         logging.info(
@@ -132,7 +143,7 @@ def extrair_dbc_lotes(
     ftp: str,
     caminho_diretorio: str,
     arquivo_nome: str | re.Pattern,
-    passo: int = 500000,
+    passo: int = 50000,
     **kwargs,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai dados de um arquivo .dbc do FTP do DataSUS e retorna DataFrames.

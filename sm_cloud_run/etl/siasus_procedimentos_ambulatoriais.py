@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
-# import os
-# import sys
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
-# ###
+# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+###
 
 import re
 import logging
@@ -18,6 +18,7 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
+from utilitarios.config_painel_sm import municipios_painel, condicoes_pa, inserir_timestamp_ftp_metadados
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
@@ -151,6 +152,8 @@ def extrair_pa(
 def transformar_pa(
     sessao: Session,
     pa: pd.DataFrame,
+    uf_sigla: str,
+    periodo_data_inicio: datetime.date,
 ) -> pd.DataFrame:
     """Transforma um `DataFrame` de procedimentos ambulatoriais do SIASUS.
     
@@ -190,16 +193,25 @@ def transformar_pa(
         f"Memória ocupada pelo DataFrame original:  {memoria_usada:.2f} mB."
     )
 
+
+    # aplica filtragem para municípios participantes (procedimento registrado no muni ou paciente residente no muni)
+    filtragem_municipios = f"(PA_UFMUN in {municipios_painel}) or (PA_MUNPCN in {municipios_painel})"
+    pa = pa.query(filtragem_municipios, engine="python")
+    logging.info(
+        f"Registros após aplicar filtro de seleção de municípios: {len(pa)}."
+    )
+
+
     # aplica condições de filtragem dos registros
-    condicoes = "(PA_TPUPS == '70') or PA_PROC_ID.str.startswith('030106') or PA_PROC_ID.str.startswith('030107') or PA_PROC_ID.str.startswith('030108') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('F') or PA_CIDPRI.str.startswith('X6') or PA_CIDPRI.str.startswith('X7') or PA_CIDPRI.str.contains('^X8[0-4][0-9]*') or PA_CIDPRI.str.startswith('R78') or PA_CIDPRI.str.startswith('T40') or (PA_CIDPRI == 'Y870') or PA_CIDPRI.str.startswith('Y90') or PA_CIDPRI.str.startswith('Y91') or (PA_CBOCOD in ['223905', '223915', '225133', '223550', '239440', '239445', '322220']) or PA_CBOCOD.str.startswith('2515') or (PA_CATEND == '02')"
     logging.info(
         f"Filtrando DataFrame com {len(pa)} procedimentos "
         + "ambulatoriais.",
     )
-    pa = pa.query(condicoes, engine="python")
+    pa = pa.query(condicoes_pa, engine="python")
     logging.info(
-        f"Registros após aplicar filtro: {len(pa)}."
+        f"Registros após aplicar filtro de condições de saúde mental: {len(pa)}."
     )
+
 
     pa_transformada = (
         pa  # noqa: WPS221  # ignorar linha complexa no pipeline
@@ -327,6 +339,12 @@ def transformar_pa(
         .add_column("criacao_data", agora_gmt_menos3())
         .add_column("atualizacao_data", agora_gmt_menos3())
 
+        # adicionar coluna ftp_arquivo_nome
+        .add_column(
+            "ftp_arquivo_nome",
+            f"PA{uf_sigla}{periodo_data_inicio:%y%m}"
+        )
+
     )
     memoria_usada = pa_transformada.memory_usage(deep=True).sum() / 10 ** 6
     logging.debug(        
@@ -337,7 +355,7 @@ def transformar_pa(
 
 def validar_pa(pa_transformada: pd.DataFrame) -> pd.DataFrame:
     assert isinstance(pa_transformada, pd.DataFrame), "Não é um DataFrame"
-    assert len(pa_transformada) > 0, "DataFrame vazio."
+    # assert len(pa_transformada) > 0, "DataFrame vazio."
     nulos_por_coluna = pa_transformada.applymap(pd.isna).sum()
     assert nulos_por_coluna["quantidade_apresentada"] == 0, (
         "A quantidade apresentada é um valor nulo."
@@ -382,7 +400,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
 
     # Extrair dados
-    session = Sessao()
+    sessao = Sessao()
 
     pa_lotes = extrair_pa(
         uf_sigla=uf_sigla,
@@ -394,8 +412,10 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     for pa_lote in pa_lotes:
         pa_transformada = transformar_pa(
-            sessao=session,
+            sessao=sessao,
             pa=pa_lote,
+            uf_sigla=uf_sigla,
+            periodo_data_inicio=periodo_data_inicio,
         )
         try: 
             validar_pa(pa_transformada)
@@ -417,13 +437,25 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     nome_arquivo_csv = f"siasus_procedimentos_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
     path_gcs = f"saude-mental/dados-publicos/siasus/procedimentos-disseminacao/{uf_sigla}/{nome_arquivo_csv}"
     
-
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
         dados=df_final.to_csv(index=False)
     )
 
+
+    # Registrar na tabela de metadados do FTP
+    logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+    inserir_timestamp_ftp_metadados(
+        sessao, 
+        uf_sigla, 
+        periodo_data_inicio, 
+        coluna_atualizar='timestamp_etl_gcs',
+        tipo='PA'
+    )
+
+
+    # Obter sumário de resposta
     response = {
         "status": "OK",
         "estado": uf_sigla,
@@ -437,7 +469,7 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
         f"Status: {response['status']}, Número de registros: {response['num_registros']}, Arquivo GCS: {response['arquivo_final_gcs']}"
     )
 
-    session.close()    
+    sessao.close()    
 
     return response
 
@@ -448,8 +480,8 @@ if __name__ == "__main__":
     from datetime import datetime
 
     # Define os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-12-01", "%Y-%m-%d").date()
+    uf_sigla = "AL"
+    periodo_data_inicio = datetime.strptime("2024-02-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
     baixar_e_processar_pa(uf_sigla, periodo_data_inicio)

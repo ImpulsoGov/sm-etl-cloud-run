@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
-import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
-###
+# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+# import os
+# import sys
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+# ###
 
 import os
 import pandas as pd
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
     # Defina os parâmetros de teste
     uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
+    periodo_data_inicio = datetime.strptime("2023-12-01", "%Y-%m-%d").date()
     tabela_destino = "dados_publicos.siasus_pa_testeloading"
 
     # Chame a função principal com os parâmetros de teste
