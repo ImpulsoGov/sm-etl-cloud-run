@@ -6,8 +6,8 @@ from flask import Flask, request, jsonify
 
 from etl.datasus_ftp_metadados import upsert_dados_no_postgres
 
-from etl.siasus_procedimentos_ambulatoriais import baixar_e_processar_pa
-from load_bd.siasus_procedimentos_ambulatoriais_l_bd import inserir_pa_postgres
+from etl.siasus_procedimentos_ambulatoriais import verificar_e_executar
+from load_bd.siasus_procedimentos_ambulatoriais_l_bd import verificar_e_executar
 
 from etl.siasus_bpa_individualizado import baixar_e_processar_bpa_i
 from load_bd.siasus_bpa_individualizado_l_bd import inserir_bpa_i_postgres
@@ -34,7 +34,7 @@ def sm_pa():
 
     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-    return jsonify(baixar_e_processar_pa(json_params['UF'], data_datetime))
+    return jsonify(verificar_e_executar(json_params['UF'], data_datetime))
 
 
 @app.route("/pa_postgres", methods=['POST'])
@@ -47,7 +47,7 @@ def load_pa():
 
     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-    return jsonify(inserir_pa_postgres(json_params['UF'], data_datetime, json_params['tabela_destino']))
+    return jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['tabela_destino']))
 
 
 @app.route("/bpa_i", methods=['POST'])
