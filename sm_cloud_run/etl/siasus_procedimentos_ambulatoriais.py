@@ -19,7 +19,9 @@ from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, null
-from utilitarios.config_painel_sm import municipios_painel, condicoes_pa, inserir_timestamp_ftp_metadados
+from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
+from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados, verificar_e_executar
+
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
@@ -165,11 +167,6 @@ def transformar_pa(
             disseminação de procedimentos ambulatoriais do SIASUS, conforme
             extraídos para uma unidade federativa e competência (mês) pela
             função [`extrair_pa()`][].
-        condicoes: conjunto opcional de condições a serem aplicadas para
-            filtrar os registros obtidos da fonte. O valor informado deve ser
-            uma *string* com a sintaxe utilizada pelo método
-            [`pandas.DataFrame.query()`][]. Por padrão, o valor do argumento é
-            `None`, o que equivale a não aplicar filtro algum.
 
     Note:
         Para otimizar a performance, os filtros são aplicados antes de qualquer
@@ -477,60 +474,6 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
 
 
 
-def verificar_e_executar(
-    uf_sigla: str, 
-    periodo_data_inicio: datetime.date
-):
-    
-    logging.info(
-        f"Verificando se PA de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser baixado..."
-    )
-    sessao = Sessao()
-        
-    tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
-
-    # Construa a query usando SQL Core
-    consulta = (
-        select(tabela_metadados_ftp)
-        .where(
-            tabela_metadados_ftp.c.tipo == 'PA',
-            tabela_metadados_ftp.c.sigla_uf == uf_sigla,
-            tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
-            or_(
-                tabela_metadados_ftp.c.timestamp_modificacao_ftp > tabela_metadados_ftp.c.timestamp_etl_gcs,
-                tabela_metadados_ftp.c.timestamp_etl_gcs.is_(null())
-            )
-        )
-    )
-
-    # Execute a consulta usando `session.execute` com a expressão SQL Core
-    resultado = sessao.execute(consulta).fetchone()
-
-    if resultado:
-        logging.info(
-        f"Verificação concluída. Iniciando processo de download."
-        )
-        # Se existir algum registro, executa a função
-        baixar_e_processar_pa(uf_sigla, periodo_data_inicio)    
-    
-    else:
-        # Obter sumário de resposta
-        response = {
-            "status": "Skipped",
-            "estado": uf_sigla,
-            "periodo": f"{periodo_data_inicio:%y%m}"
-        }
-
-        logging.info(
-            "Essa combinação já foi baixada e é a mais atual. "
-            f"Nenhum dado foi baixado para {uf_sigla} ({periodo_data_inicio:%y%m})."
-        )
-
-        sessao.close()    
-
-        return response
-
-
 
 # RODAR LOCALMENTE
 if __name__ == "__main__":
@@ -541,4 +484,9 @@ if __name__ == "__main__":
     periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
-    verificar_e_executar(uf_sigla, periodo_data_inicio)
+    verificar_e_executar(
+        uf_sigla=uf_sigla, 
+        periodo_data_inicio=periodo_data_inicio, 
+        tipo="PA", 
+        acao="baixar"
+    )
