@@ -36,10 +36,7 @@ def sm_pa():
 
     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-    response = jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
-    return response
-
-
+    return jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
 
 # @app.route("/pa", methods=['POST'])

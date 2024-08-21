@@ -76,7 +76,7 @@ def inserir_timestamp_ftp_metadados(
 def verificar_e_executar(
     uf_sigla: str,
     periodo_data_inicio: datetime.date,
-    tipo: Literal['PA', 'BI', 'PS', 'RD', 'HB', 'PF'],
+    tipo: str,
     acao: Literal['baixar', 'inserir']
 ):
     logging.info(
@@ -117,43 +117,15 @@ def verificar_e_executar(
         )
         
         # Realiza a ação baseada no tipo e ação escolhida
-        if acao == 'inserir':
-            if tipo == 'PA':
-                from load_bd.siasus_procedimentos_ambulatoriais_l_bd import inserir_pa_postgres
-                inserir_pa_postgres(uf_sigla, periodo_data_inicio)
-
-            elif tipo == 'BI':
-                from load_bd.siasus_bpa_individualizado_l_bd import inserir_bpa_i_postgres
-                inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio)
-
-            # elif tipo == 'PS':
-            #     from load_bd.siasus_raas_ps_l_bd import inserir_raas_postgres
-            #     inserir_raas_postgres(uf_sigla, periodo_data_inicio)
-
-            # elif tipo == 'RD':
-            #     from load_bd.sihsus_aih_l_bd import inserir_aih_postgres
-            #     inserir_aih_postgres(uf_sigla, periodo_data_inicio)
-
-            # elif tipo == 'HB':
-            #     from load_bd. import inserir_hab_postgres
-            #     inserir_hb_postgres(uf_sigla, periodo_data_inicio)
-
-            # elif tipo == 'PF':
-            #     from load_bd. import inserir_vinculos_postgres
-            #     inserir_pf_postgres(uf_sigla, periodo_data_inicio)
-
-            else:
-                raise ValueError("Tipo inválido para a ação 'inserir'. Use 'PA' ou 'BPA-i'.")
-            
-        elif acao == 'baixar':
+        if acao == 'baixar':
             if tipo == 'PA':
                 from etl.siasus_procedimentos_ambulatoriais import baixar_e_processar_pa
                 response = baixar_e_processar_pa(uf_sigla, periodo_data_inicio)
                 return response
                 
-            elif tipo == 'BI':
-                from etl.siasus_bpa_individualizado import baixar_e_processar_bpa_i
-                baixar_e_processar_bpa_i(uf_sigla, periodo_data_inicio)
+            # elif tipo == 'BI':
+            #     from etl.siasus_bpa_individualizado import baixar_e_processar_bpa_i
+            #     baixar_e_processar_bpa_i(uf_sigla, periodo_data_inicio)
 
             # elif tipo == 'PS':
             #     from etl.siasus_raas_ps import baixar_e_processar_raas
@@ -173,8 +145,43 @@ def verificar_e_executar(
 
 
             else:
-                raise ValueError("Tipo inválido para a ação 'baixar'. Use 'PA' ou 'BPA-i'.")
+                raise ValueError("Tipo inválido para a ação 'baixar'. Use 'PA', 'BI', 'PS', 'RD', 'HB' ou 'PF'.")
         
+
+        elif acao == 'inserir':
+            if tipo == 'PA':
+                from load_bd.siasus_procedimentos_ambulatoriais_l_bd import inserir_pa_postgres
+                response = inserir_pa_postgres(uf_sigla, periodo_data_inicio)
+                return response                
+
+            # elif tipo == 'BI':
+            #     from load_bd.siasus_bpa_individualizado_l_bd import inserir_bpa_i_postgres
+            #     response = inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio)
+            #     return response
+
+            # elif tipo == 'PS':
+            #     from load_bd.siasus_raas_ps_l_bd import inserir_raas_postgres
+            #     inserir_raas_postgres(uf_sigla, periodo_data_inicio)
+
+            # elif tipo == 'RD':
+            #     from load_bd.sihsus_aih_l_bd import inserir_aih_postgres
+            #     inserir_aih_postgres(uf_sigla, periodo_data_inicio)
+
+            # elif tipo == 'HB':
+            #     from load_bd. import inserir_hab_postgres
+            #     inserir_hb_postgres(uf_sigla, periodo_data_inicio)
+
+            # elif tipo == 'PF':
+            #     from load_bd. import inserir_vinculos_postgres
+            #     inserir_pf_postgres(uf_sigla, periodo_data_inicio)
+
+            else:
+                raise ValueError("Tipo inválido para a ação 'inserir'. Use 'PA', 'BI', 'PS', 'RD', 'HB' ou 'PF'.")
+
+        else:
+            raise ValueError("Ação inválida. Use 'baixar' ou 'inserir'.")   
+            
+
     else:
         response = {
             "status": "skipped",
