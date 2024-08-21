@@ -11,16 +11,17 @@ import pandas as pd
 import numpy as np
 import logging
 import datetime
+from typing import Final
 
 import janitor
 from frozendict import frozendict
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, null
 from utilitarios.bd_config import Sessao, tabelas
-from utilitarios.config_painel_sm import inserir_timestamp_ftp_metadados
+from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados, verificar_e_executar
 
 from utilitarios.cloud_storage import download_from_bucket
-from utilitarios.bd_utilitarios import carregar_dataframe
+from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe
 from utilitarios.logger_config import logger_config
 
 
@@ -127,17 +128,14 @@ def transformar_tipos(
     )
     return pa_transformada
 
-def validar_pa(pa_transformada: pd.DataFrame) -> pd.DataFrame:
-    assert isinstance(pa_transformada, pd.DataFrame), "Não é um DataFrame"
-    assert len(pa_transformada) > 0, "DataFrame vazio."
-
 
 def inserir_pa_postgres(
     uf_sigla: str,
-    periodo_data_inicio: datetime.date,
-    tabela_destino: str,
+    periodo_data_inicio: datetime.date
 ):
-    session = Sessao()
+    sessao = Sessao()
+
+    tabela_destino = "saude_mental.siasus_procedimentos_ambulatoriais_sm_municipios"
     
     try:   
         # Baixar CSV do GCS e carregar em um DataFrame
@@ -148,20 +146,24 @@ def inserir_pa_postgres(
             blob_path=path_gcs)
         
 
-        logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
+        logging.info("Verificando necessidade de exclusão de registros da tabela destino...")
         # Obtem valor do nome do arquivo baixado do FTP e gravado no dataframe        
         ftp_arquivo_nome_df = pa['ftp_arquivo_nome'].iloc[0]
-        
-        # Deleta linhas conflitantes
         tabela_ref = tabelas[tabela_destino]
-        delete_result = session.execute(
+  
+
+        # Deleta linhas conflitantes
+        delete_result = sessao.execute(
             tabela_ref.delete()
             .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
         )
         num_deleted = delete_result.rowcount
-        
-        logging.info(f"Número de linhas deletadas: {num_deleted}")        
 
+        # Verifica se alguma linha foi deletada
+        if num_deleted > 0:
+            logging.info(f"Número de linhas deletadas: {num_deleted}")
+        else:
+            logging.info("Nenhum registro foi deletado.")
 
 
         # Tamanho do lote de processamento
@@ -175,26 +177,26 @@ def inserir_pa_postgres(
         contador = 0
         for pa_lote in pa_lotes:
             pa_transformada = transformar_tipos(
-                sessao=session, 
+                sessao=sessao, 
                 pa=pa_lote,
             )
             try:
-                validar_pa(pa_transformada)
+                validar_dataframe(pa_transformada)
             except AssertionError as mensagem:
-                session.rollback()
+                sessao.rollback()
                 raise RuntimeError(
                     "Dados inválidos encontrados após a transformação:"
                     + " {}".format(mensagem),
                 )
 
             carregamento_status = carregar_dataframe(
-                sessao=session,
+                sessao=sessao,
                 df=pa_transformada,
                 tabela_destino=tabela_destino,
                 passo=None,
             )
             if carregamento_status != 0:
-                session.rollback()
+                sessao.rollback()
                 raise RuntimeError(
                     "Execução interrompida em razão de um erro no "
                     + "carregamento."
@@ -205,7 +207,7 @@ def inserir_pa_postgres(
         # Registrar na tabela de metadados do FTP
         logging.info("Inserindo timestamp na tabela de metadados do FTP...")
         inserir_timestamp_ftp_metadados(
-            session, 
+            sessao, 
             uf_sigla, 
             periodo_data_inicio, 
             coluna_atualizar='timestamp_load_bd',
@@ -214,19 +216,20 @@ def inserir_pa_postgres(
 
 
         # Se tudo ocorreu sem erros, commita a transação
-        session.commit()
+        sessao.commit()
 
     except Exception as e:
         # Em caso de erro, faz rollback da transação
-        session.rollback()
+        sessao.rollback()
         raise RuntimeError(f"Erro durante a inserção no banco de dados: {format(str(e))}")
 
     finally:
         # Independentemente de sucesso ou falha, fecha a sessão
-        session.close()
+        sessao.close()
 
     response = {
         "status": "OK",
+        "tipo": "PA",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
         "insercoes": contador,
@@ -235,74 +238,21 @@ def inserir_pa_postgres(
     return response
 
 
-def verificar_e_executar(
-    uf_sigla: str, 
-    periodo_data_inicio: datetime.date,
-    tabela_destino: str,
-):
-    
-    logging.info(
-        f"Verificando se PA de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser inserido no banco..."
-    )
-    sessao = Sessao()
-        
-    tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
-
-    # Query que consulta se é necessário a inserção/reinserção do dado
-    consulta = (
-        select(tabela_metadados_ftp)
-        .where(
-            tabela_metadados_ftp.c.tipo == 'PA',
-            tabela_metadados_ftp.c.sigla_uf == uf_sigla,
-            tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
-            or_(
-                tabela_metadados_ftp.c.timestamp_etl_gcs > tabela_metadados_ftp.c.timestamp_load_bd,
-                tabela_metadados_ftp.c.timestamp_load_bd.is_(null())
-            )
-        )
-    )
-
-    # Execute a consulta usando `session.execute` com a expressão SQL Core
-    resultado = sessao.execute(consulta).fetchone()
-
-    if resultado:
-        logging.info(
-        f"Verificação concluída. Iniciando processo de inserção/reinserção de dados no banco analítico..."
-        )
-        # Se existir algum registro, executa a função
-        tabela_destino = tabela_destino
-        inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)    
-    
-    else:
-        # Obter sumário de resposta
-        response = {
-            "status": "Skipped",
-            "estado": uf_sigla,
-            "periodo": f"{periodo_data_inicio:%y%m}"
-        }
-
-        logging.info(
-            "Essa combinação já foi inserida e é a mais atual. "
-            f"Nenhum dado foi inserido para {uf_sigla} ({periodo_data_inicio:%y%m})."
-        )
-
-        sessao.close()    
-
-        return response
-
-
-
 
 # RODAR LOCALMENTE
 if __name__ == "__main__":
     from datetime import datetime
 
     # Defina os parâmetros de teste
-    uf_sigla = "AL"
-    periodo_data_inicio = datetime.strptime("2024-05-01", "%Y-%m-%d").date()
-    tabela_destino = "saude_mental.siasus_procedimentos_ambulatoriais_sm_municipios"
+    uf_sigla = "PI"
+    periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
 
     # Chame a função principal com os parâmetros de teste
-    verificar_e_executar(uf_sigla, periodo_data_inicio, tabela_destino)
+    verificar_e_executar(
+        uf_sigla=uf_sigla, 
+        periodo_data_inicio=periodo_data_inicio, 
+        tipo="PA", 
+        acao="inserir"
+    )
 
 

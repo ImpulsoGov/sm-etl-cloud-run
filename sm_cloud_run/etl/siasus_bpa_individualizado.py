@@ -19,13 +19,14 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
-from utilitarios.config_painel_sm import municipios_painel, condicoes_bpa_i
+from sqlalchemy import select, or_, null
+from utilitarios.config_painel_sm import municipios_painel, condicoes_bpa_i, inserir_timestamp_ftp_metadados
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data, de_aaaammdd_para_timestamp
 from utilitarios.geografias import id_sus_para_id_impulso
-from utilitarios.bd_config import Sessao
+from utilitarios.bd_config import Sessao, tabelas
 from utilitarios.cloud_storage import upload_to_bucket
 from utilitarios.logger_config import logger_config
 
@@ -123,6 +124,8 @@ def extrair_bpa_i(
 def transformar_bpa_i(
     sessao: Session,
     bpa_i: pd.DataFrame,
+    uf_sigla: str,
+    periodo_data_inicio: datetime.date,
 ) -> pd.DataFrame:
     """Transforma um `DataFrame` de BPA-i obtido do FTP público do DataSUS.
 
@@ -252,12 +255,19 @@ def transformar_bpa_i(
         .add_column("criacao_data", agora_gmt_menos3())
         .add_column("atualizacao_data", agora_gmt_menos3())
 
+        # adicionar coluna ftp_arquivo_nome
+        .add_column(
+            "ftp_arquivo_nome",
+            f"BI{uf_sigla}{periodo_data_inicio:%y%m}"
+        )
+
     )
     memoria_usada=(bpa_i_transformada.memory_usage(deep=True).sum() / 10 ** 6)
     logging.debug(
         "Memória ocupada pelo DataFrame transformado: {memoria_usada:.2f} mB."
     )
     return bpa_i_transformada
+
 
 
 def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
@@ -291,7 +301,7 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
     """
 
     # Extrair dados
-    session = Sessao()
+    sessao = Sessao()
     
     bpa_i_lotes = extrair_bpa_i(
         uf_sigla=uf_sigla,
@@ -303,7 +313,7 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     for bpa_i_lote in bpa_i_lotes:
         bpa_i_transformada = transformar_bpa_i(
-            sessao=session,
+            sessao=sessao,
             bpa_i=bpa_i_lote,
         )
 
@@ -325,6 +335,16 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
         dados=df_final.to_csv()
     )
 
+    # Registrar na tabela de metadados do FTP
+    logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+    inserir_timestamp_ftp_metadados(
+        sessao, 
+        uf_sigla, 
+        periodo_data_inicio, 
+        coluna_atualizar='timestamp_etl_gcs',
+        tipo='BI'
+    )
+
     response = {
         "status": "OK",
         "estado": uf_sigla,
@@ -338,18 +358,72 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
         f"Status: {response['status']}, Número de registros: {response['num_registros']}, Arquivo GCS: {response['arquivo_final_gcs']}"
     )
 
-    session.close()
+    sessao.close()
 
     return response
 
+
+def verificar_e_executar(
+    uf_sigla: str, 
+    periodo_data_inicio: datetime.date
+):
+    
+    logging.info(
+        f"Verificando se BPA-i de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser baixado..."
+    )
+    sessao = Sessao()
+        
+    tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
+
+    # Construa a query usando SQL Core
+    consulta = (
+        select(tabela_metadados_ftp)
+        .where(
+            tabela_metadados_ftp.c.tipo == 'BI',
+            tabela_metadados_ftp.c.sigla_uf == uf_sigla,
+            tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
+            or_(
+                tabela_metadados_ftp.c.timestamp_modificacao_ftp > tabela_metadados_ftp.c.timestamp_etl_gcs,
+                tabela_metadados_ftp.c.timestamp_etl_gcs.is_(null())
+            )
+        )
+    )
+
+    # Execute a consulta usando `session.execute` com a expressão SQL Core
+    resultado = sessao.execute(consulta).fetchone()
+
+    if resultado:
+        logging.info(
+        f"Verificação concluída. Iniciando processo de download."
+        )
+        # Se existir algum registro, executa a função
+        baixar_e_processar_bpa_i(uf_sigla, periodo_data_inicio)    
+    
+    else:
+        # Obter sumário de resposta
+        response = {
+            "status": "Skipped",
+            "estado": uf_sigla,
+            "periodo": f"{periodo_data_inicio:%y%m}"
+        }
+
+        logging.info(
+            "Essa combinação já foi baixada e é a mais atual. "
+            f"Nenhum dado de BPA-i foi baixado para {uf_sigla} ({periodo_data_inicio:%y%m})."
+        )
+
+        sessao.close()    
+
+        return response
+    
 
 # RODAR LOCALMENTE
 if __name__ == "__main__":
     from datetime import datetime
 
     # Define os parâmetros de teste
-    uf_sigla = "RJ"
-    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
+    uf_sigla = "AL"
+    periodo_data_inicio = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
 
     # Chama a função principal com os parâmetros de teste
-    baixar_e_processar_bpa_i(uf_sigla, periodo_data_inicio)
+    verificar_e_executar(uf_sigla, periodo_data_inicio)
