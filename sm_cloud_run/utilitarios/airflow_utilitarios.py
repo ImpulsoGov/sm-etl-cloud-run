@@ -196,3 +196,23 @@ def verificar_e_executar(
 
         sessao.close()
         return response
+
+
+
+   
+    
+# RODAR LOCALMENTE
+if __name__ == "__main__":
+    from datetime import datetime
+
+    # Define os parâmetros de teste
+    uf_sigla = "AL"
+    periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
+
+    # Chama a função principal com os parâmetros de teste
+    verificar_e_executar(
+        uf_sigla=uf_sigla, 
+        periodo_data_inicio=periodo_data_inicio, 
+        tipo="PA", 
+        acao="baixar"
+    )

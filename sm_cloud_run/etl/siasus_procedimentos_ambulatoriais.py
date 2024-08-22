@@ -18,16 +18,15 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 from sqlalchemy.orm import Session
-from sqlalchemy import select, or_, null
 from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
-from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados, verificar_e_executar
+from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados
 
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
-from utilitarios.bd_config import Sessao, tabelas
+from utilitarios.bd_config import Sessao
 from utilitarios.cloud_storage import upload_to_bucket
 from utilitarios.logger_config import logger_config
 
@@ -470,23 +469,3 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
     sessao.close()    
 
     return response
-
-
-
-
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Define os parâmetros de teste
-    uf_sigla = "AL"
-    periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
-
-    # Chama a função principal com os parâmetros de teste
-    verificar_e_executar(
-        uf_sigla=uf_sigla, 
-        periodo_data_inicio=periodo_data_inicio, 
-        tipo="PA", 
-        acao="baixar"
-    )
