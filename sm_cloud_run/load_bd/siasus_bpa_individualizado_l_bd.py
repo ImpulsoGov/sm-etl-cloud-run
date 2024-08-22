@@ -12,17 +12,19 @@ import numpy as np
 import logging
 import datetime
 from io import StringIO
+from typing import Final
 
 from google.cloud import storage
 
 import janitor
 from frozendict import frozendict
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessao
 from utilitarios.bd_config import Sessao, tabelas
+from utilitarios.config_painel_sm import inserir_timestamp_ftp_metadados
 
 from utilitarios.logger_config import logger_config
 from utilitarios.cloud_storage import download_from_bucket
-from utilitarios.bd_utilitarios import carregar_dataframe
+from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe
 
 # set up logging to file
 logger_config()
@@ -70,6 +72,7 @@ TIPOS_BPA_I: Final[frozendict] = frozendict(
         "unidade_geografica_id": "str",
         "criacao_data": "datetime64[ns]",
         "atualizacao_data": "datetime64[ns]",
+        "ftp_arquivo_nome": "object",
     },
 )
 
@@ -80,7 +83,7 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
 ]
 
 def transformar_tipos(
-    sessao: Session,
+    sessao: sessao,
     bpa_i: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -107,7 +110,7 @@ def inserir_bpa_i_postgres(
     periodo_data_inicio: datetime.date,
     tabela_destino: str,
 ):
-    session = Sessao()
+    sessao = Sessao()
     
     try:   
         # Baixar CSV do GCS e carregar em um DataFrame
@@ -117,30 +120,25 @@ def inserir_bpa_i_postgres(
             bucket_name="camada-bronze", 
             blob_path=path_gcs)
         
-        # Cria um objeto de lista que conterá dados se o parâmetro de competência fornecido na execução 
-        # da função (periodo_data_inicio) for igual a alguma data de processamento já presente na tabela  
-        tabela_fonte = tabelas[tabela_destino]          
-        query = session.query(tabela_fonte).filter_by(processamento_periodo_data_inicio = periodo_data_inicio)
-        existing_data = query.first()
+        
+        logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
+        # Obtem valor do nome do arquivo baixado do FTP e gravado no dataframe        
+        ftp_arquivo_nome_df = bpa_i['ftp_arquivo_nome'].iloc[0]
+        
+        # Deleta linhas conflitantes
+        tabela_ref = tabelas[tabela_destino]
+        delete_result = sessao.execute(
+            tabela_ref.delete()
+            .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
+        )
+        num_deleted = delete_result.rowcount
+        
+        logging.info(f"Número de linhas deletadas: {num_deleted}")        
 
 
-        if existing_data:
-            # Filtra os dados do GCS que não possuem `processamento_periodo_data_inicio` igual ao parâmetro periodo_data_inicio
-            bpa_i_filtrada = pa[pa['processamento_periodo_data_inicio'] != periodo_data_inicio.strftime("%Y-%m-%d")]
-
-            if bpa_i_filtrada.empty:
-                raise RuntimeError("Todos os dados possuem uma data de processamento que já existe na "
-                                   + "tabela destino, portanto não foram inseridos.")
-            
-            else: 
-                pa = bpa_i_filtrada            
-                logging.warning(f"Haviam {len(bpa_i)} registros na competência de processamento {periodo_data_inicio}, " 
-                                + f"mas {len(bpa_i) - len(bpa_i_filtrada)} registros não foram incluídos porque apresentavam "
-                                + "data de processamento que já foi inserida na tabela destino.")            
-
-
-        # Obtem tamanho do lote de processamento
-        passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
+        # Tamanho do lote de processamento
+        # passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
+        passo = 100000
 
         # Divide o DataFrame em lotes
         num_lotes = len(bpa_i) // passo + 1
@@ -149,44 +147,129 @@ def inserir_bpa_i_postgres(
         contador = 0
         for bpa_i_lote in bpa_i_lotes:
             bpa_i_transformada = transformar_tipos(
-                sessao=session, 
+                sessao=sessao, 
                 bpa_i=bpa_i_lote,
             )
+            try:
+                validar_dataframe(bpa_i_transformada)
+            except AssertionError as mensagem:
+                sessao.rollback()
+                raise RuntimeError(
+                    "Dados inválidos encontrados após a transformação:"
+                    + " {}".format(mensagem),
+                )
 
             carregamento_status = carregar_dataframe(
-                sessao=session,
+                sessao=sessao,
                 df=bpa_i_transformada,
                 tabela_destino=tabela_destino,
                 passo=None,
             )
             if carregamento_status != 0:
-                session.rollback()
+                sessao.rollback()
                 raise RuntimeError(
                     "Execução interrompida em razão de um erro no "
                     + "carregamento."
                 )
             contador += len(bpa_i_lote)
 
+        # Registrar na tabela de metadados do FTP
+        logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+        inserir_timestamp_ftp_metadados(
+            sessao, 
+            uf_sigla, 
+            periodo_data_inicio, 
+            coluna_atualizar='timestamp_load_bd',
+            tipo='BI'
+        )
+
         # Se tudo ocorreu sem erros, commita a transação
-        session.commit()
+        sessao.commit()
 
     except Exception as e:
         # Em caso de erro, faz rollback da transação
-        session.rollback()
+        sessao.rollback()
         raise RuntimeError(f"Erro durante a inserção no banco de dados: {format(str(e))}")
 
     finally:
         # Independentemente de sucesso ou falha, fecha a sessão
-        session.close()
+        sessao.close()
 
     response = {
         "status": "OK",
+        "tipo": "BPA-i",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
         "insercoes": contador,
     }
 
     return response
+
+
+verificar_e_executar(
+    uf_sigla=uf_sigla, 
+    periodo_data_inicio=periodo_data_inicio, 
+    tabela_destino="nome_da_tabela", 
+    tipo="BPA-i", 
+    acao="inserir")
+
+
+# def verificar_e_executar(
+#     uf_sigla: str, 
+#     periodo_data_inicio: datetime.date,
+#     tabela_destino: str,
+# ):
+    
+#     logging.info(
+#         f"Verificando se BPA-i de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser inserido no banco..."
+#     )
+#     sessao = Sessao()
+        
+#     tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
+
+#     # Query que consulta se é necessário a inserção/reinserção do dado
+#     consulta = (
+#         select(tabela_metadados_ftp)
+#         .where(
+#             tabela_metadados_ftp.c.tipo == 'PA',
+#             tabela_metadados_ftp.c.sigla_uf == uf_sigla,
+#             tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
+#             or_(
+#                 tabela_metadados_ftp.c.timestamp_etl_gcs > tabela_metadados_ftp.c.timestamp_load_bd,
+#                 tabela_metadados_ftp.c.timestamp_load_bd.is_(null())
+#             )
+#         )
+#     )
+
+#     # Execute a consulta usando `sessao.execute` com a expressão SQL Core
+#     resultado = sessao.execute(consulta).fetchone()
+
+#     if resultado:
+#         logging.info(
+#         f"Verificação concluída. Iniciando processo de inserção/reinserção de dados no banco analítico..."
+#         )
+#         # Se existir algum registro, executa a função
+#         tabela_destino = tabela_destino
+#         inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio, tabela_destino)    
+    
+#     else:
+#         # Obter sumário de resposta
+#         response = {
+#             "status": "Skipped",
+#             "estado": uf_sigla,
+#             "periodo": f"{periodo_data_inicio:%y%m}"
+#         }
+
+#         logging.info(
+#             "Essa combinação já foi inserida e é a mais atual. "
+#             f"Nenhum dado foi inserido para {uf_sigla} ({periodo_data_inicio:%y%m})."
+#         )
+
+#         sessao.close()    
+
+#         return response
+    
+
 
 
 # RODAR LOCALMENTE

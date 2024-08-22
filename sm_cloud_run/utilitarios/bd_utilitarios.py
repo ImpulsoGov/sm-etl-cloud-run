@@ -19,7 +19,6 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError, InvalidRequestError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.schema import MetaData, Table
-
 import logging
 
 
@@ -204,7 +203,7 @@ def carregar_dataframe(
         lambda dt: dt.isoformat() if pd.notna(dt) else None
     )
 
-    logging.info("Copiando registros...")
+    # logging.info("Copiando registros...")
 
     ponto_de_recuperacao = sessao.begin_nested()
     conexao = sessao.connection()
@@ -243,3 +242,10 @@ def carregar_dataframe(
     logging.info(f"Carregamento concluído em {tabela_destino}.")
 
     return 0
+
+
+def validar_dataframe(
+    df_transformada: pd.DataFrame
+) -> pd.DataFrame:
+    assert isinstance(df_transformada, pd.DataFrame), "Não é um DataFrame"
+    assert len(df_transformada) > 0, "Dataframe vazio."
