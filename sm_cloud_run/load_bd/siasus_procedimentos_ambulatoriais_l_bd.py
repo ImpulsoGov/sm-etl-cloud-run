@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-# # NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
-# import os
-# import sys
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
-# ###
+# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+###
 
 import os
 import pandas as pd
@@ -15,7 +15,9 @@ import datetime
 import janitor
 from frozendict import frozendict
 from sqlalchemy.orm import Session
+from sqlalchemy import select, or_, null
 from utilitarios.bd_config import Sessao, tabelas
+from utilitarios.config_painel_sm import inserir_timestamp_ftp_metadados
 
 from utilitarios.cloud_storage import download_from_bucket
 from utilitarios.bd_utilitarios import carregar_dataframe
@@ -93,6 +95,7 @@ TIPOS_PA: Final[frozendict] = frozendict(
         "unidade_geografica_id": "object",
         "criacao_data": "datetime64[ns]",
         "atualizacao_data": "datetime64[ns]",
+        "ftp_arquivo_nome": "object",
     },
 )
 
@@ -144,26 +147,21 @@ def inserir_pa_postgres(
             bucket_name="camada-bronze", 
             blob_path=path_gcs)
         
-        # Cria um objeto de lista que conterá dados se o parâmetro de competência fornecido na execução 
-        # da função (periodo_data_inicio) for igual a alguma data de processamento já presente na tabela  
-        tabela_fonte = tabelas[tabela_destino]          
-        query = session.query(tabela_fonte).filter_by(processamento_periodo_data_inicio = periodo_data_inicio)
-        existing_data = query.first()
 
+        logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
+        # Obtem valor do nome do arquivo baixado do FTP e gravado no dataframe        
+        ftp_arquivo_nome_df = pa['ftp_arquivo_nome'].iloc[0]
+        
+        # Deleta linhas conflitantes
+        tabela_ref = tabelas[tabela_destino]
+        delete_result = session.execute(
+            tabela_ref.delete()
+            .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
+        )
+        num_deleted = delete_result.rowcount
+        
+        logging.info(f"Número de linhas deletadas: {num_deleted}")        
 
-        if existing_data:
-            # Filtra os dados do GCS que não possuem `processamento_periodo_data_inicio` igual ao parâmetro periodo_data_inicio
-            pa_filtrada = pa[pa['processamento_periodo_data_inicio'] != periodo_data_inicio.strftime("%Y-%m-%d")]
-
-            if pa_filtrada.empty:
-                raise RuntimeError("Todos os dados possuem uma data de processamento que já existe na "
-                                   + "tabela destino, portanto não foram inseridos.")
-            
-            else: 
-                pa = pa_filtrada            
-                logging.warning(f"Haviam {len(pa)} registros na competência de processamento {periodo_data_inicio}, " 
-                                + f"mas {len(pa) - len(pa_filtrada)} registros não foram incluídos porque apresentavam "
-                                + "data de processamento que já foi inserida na tabela destino.")            
 
 
         # Tamanho do lote de processamento
@@ -203,6 +201,18 @@ def inserir_pa_postgres(
                 )
             contador += len(pa_lote)
 
+
+        # Registrar na tabela de metadados do FTP
+        logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+        inserir_timestamp_ftp_metadados(
+            session, 
+            uf_sigla, 
+            periodo_data_inicio, 
+            coluna_atualizar='timestamp_load_bd',
+            tipo='PA'
+        )
+
+
         # Se tudo ocorreu sem erros, commita a transação
         session.commit()
 
@@ -225,14 +235,74 @@ def inserir_pa_postgres(
     return response
 
 
+def verificar_e_executar(
+    uf_sigla: str, 
+    periodo_data_inicio: datetime.date,
+    tabela_destino: str,
+):
+    
+    logging.info(
+        f"Verificando se PA de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser inserido no banco..."
+    )
+    sessao = Sessao()
+        
+    tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
+
+    # Query que consulta se é necessário a inserção/reinserção do dado
+    consulta = (
+        select(tabela_metadados_ftp)
+        .where(
+            tabela_metadados_ftp.c.tipo == 'PA',
+            tabela_metadados_ftp.c.sigla_uf == uf_sigla,
+            tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
+            or_(
+                tabela_metadados_ftp.c.timestamp_etl_gcs > tabela_metadados_ftp.c.timestamp_load_bd,
+                tabela_metadados_ftp.c.timestamp_load_bd.is_(null())
+            )
+        )
+    )
+
+    # Execute a consulta usando `session.execute` com a expressão SQL Core
+    resultado = sessao.execute(consulta).fetchone()
+
+    if resultado:
+        logging.info(
+        f"Verificação concluída. Iniciando processo de inserção/reinserção de dados no banco analítico..."
+        )
+        # Se existir algum registro, executa a função
+        tabela_destino = tabela_destino
+        inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)    
+    
+    else:
+        # Obter sumário de resposta
+        response = {
+            "status": "Skipped",
+            "estado": uf_sigla,
+            "periodo": f"{periodo_data_inicio:%y%m}"
+        }
+
+        logging.info(
+            "Essa combinação já foi inserida e é a mais atual. "
+            f"Nenhum dado foi inserido para {uf_sigla} ({periodo_data_inicio:%y%m})."
+        )
+
+        sessao.close()    
+
+        return response
+
+
+
+
 # RODAR LOCALMENTE
 if __name__ == "__main__":
     from datetime import datetime
 
     # Defina os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-12-01", "%Y-%m-%d").date()
-    tabela_destino = "dados_publicos.siasus_pa_testeloading"
+    uf_sigla = "AL"
+    periodo_data_inicio = datetime.strptime("2024-05-01", "%Y-%m-%d").date()
+    tabela_destino = "saude_mental.siasus_procedimentos_ambulatoriais_sm_municipios"
 
     # Chame a função principal com os parâmetros de teste
-    inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)
+    verificar_e_executar(uf_sigla, periodo_data_inicio, tabela_destino)
+
+
