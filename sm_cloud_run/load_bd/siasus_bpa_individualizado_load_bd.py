@@ -11,20 +11,16 @@ import pandas as pd
 import numpy as np
 import logging
 import datetime
-from io import StringIO
 from typing import Final
-
-from google.cloud import storage
 
 import janitor
 from frozendict import frozendict
-from sqlalchemy.orm import sessao
 from utilitarios.bd_config import Sessao, tabelas
-from utilitarios.config_painel_sm import inserir_timestamp_ftp_metadados
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
 from utilitarios.logger_config import logger_config
 from utilitarios.cloud_storage import download_from_bucket
-from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe
+from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe, deletar_conflitos
 
 # set up logging to file
 logger_config()
@@ -82,8 +78,8 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
     if tipo_coluna.lower() == "int64" or tipo_coluna.lower() == "float64"
 ]
 
+
 def transformar_tipos(
-    sessao: sessao,
     bpa_i: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -107,38 +103,28 @@ def transformar_tipos(
 
 def inserir_bpa_i_postgres(
     uf_sigla: str,
-    periodo_data_inicio: datetime.date,
-    tabela_destino: str,
+    periodo_data_inicio: datetime.date
 ):
-    sessao = Sessao()
-    
+    sessao = Sessao()    
+    tabela_destino = "dados_publicos.sm_siasus_bpa_i_disseminacao"    
+    passo = 100000
+
     try:   
         # Baixar CSV do GCS e carregar em um DataFrame
         path_gcs = f"saude-mental/dados-publicos/siasus/bpa-i-disseminacao/{uf_sigla}/siasus_bpa_i_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"    
         
         bpa_i = download_from_bucket(
             bucket_name="camada-bronze", 
-            blob_path=path_gcs)
-        
+            blob_path=path_gcs)        
         
         logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
-        # Obtem valor do nome do arquivo baixado do FTP e gravado no dataframe        
-        ftp_arquivo_nome_df = bpa_i['ftp_arquivo_nome'].iloc[0]
-        
-        # Deleta linhas conflitantes
-        tabela_ref = tabelas[tabela_destino]
-        delete_result = sessao.execute(
-            tabela_ref.delete()
-            .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
-        )
-        num_deleted = delete_result.rowcount
-        
-        logging.info(f"Número de linhas deletadas: {num_deleted}")        
 
-
-        # Tamanho do lote de processamento
-        # passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
-        passo = 100000
+        # Deleta conflitos para evitar duplicação de dados
+        deletar_conflitos(
+            sessao, 
+            tabela_ref = tabelas[tabela_destino], 
+            ftp_arquivo_nome_df = bpa_i['ftp_arquivo_nome'].iloc[0]
+        ) 
 
         # Divide o DataFrame em lotes
         num_lotes = len(bpa_i) // passo + 1
@@ -146,12 +132,11 @@ def inserir_bpa_i_postgres(
 
         contador = 0
         for bpa_i_lote in bpa_i_lotes:
-            bpa_i_transformada = transformar_tipos(
-                sessao=sessao, 
+            bpa_i_transformado = transformar_tipos(
                 bpa_i=bpa_i_lote,
             )
             try:
-                validar_dataframe(bpa_i_transformada)
+                validar_dataframe(bpa_i_transformado)
             except AssertionError as mensagem:
                 sessao.rollback()
                 raise RuntimeError(
@@ -161,7 +146,7 @@ def inserir_bpa_i_postgres(
 
             carregamento_status = carregar_dataframe(
                 sessao=sessao,
-                df=bpa_i_transformada,
+                df=bpa_i_transformado,
                 tabela_destino=tabela_destino,
                 passo=None,
             )
@@ -197,7 +182,7 @@ def inserir_bpa_i_postgres(
 
     response = {
         "status": "OK",
-        "tipo": "BPA-i",
+        "tipo": "BI",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
         "insercoes": contador,
@@ -206,80 +191,14 @@ def inserir_bpa_i_postgres(
     return response
 
 
-verificar_e_executar(
-    uf_sigla=uf_sigla, 
-    periodo_data_inicio=periodo_data_inicio, 
-    tabela_destino="nome_da_tabela", 
-    tipo="BPA-i", 
-    acao="inserir")
 
+# # RODAR LOCALMENTE
+# if __name__ == "__main__":
+#     from datetime import datetime
 
-# def verificar_e_executar(
-#     uf_sigla: str, 
-#     periodo_data_inicio: datetime.date,
-#     tabela_destino: str,
-# ):
-    
-#     logging.info(
-#         f"Verificando se BPA-i de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser inserido no banco..."
-#     )
-#     sessao = Sessao()
-        
-#     tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
+#     # Defina os parâmetros de teste
+#     uf_sigla = "AC"
+#     periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
 
-#     # Query que consulta se é necessário a inserção/reinserção do dado
-#     consulta = (
-#         select(tabela_metadados_ftp)
-#         .where(
-#             tabela_metadados_ftp.c.tipo == 'PA',
-#             tabela_metadados_ftp.c.sigla_uf == uf_sigla,
-#             tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
-#             or_(
-#                 tabela_metadados_ftp.c.timestamp_etl_gcs > tabela_metadados_ftp.c.timestamp_load_bd,
-#                 tabela_metadados_ftp.c.timestamp_load_bd.is_(null())
-#             )
-#         )
-#     )
-
-#     # Execute a consulta usando `sessao.execute` com a expressão SQL Core
-#     resultado = sessao.execute(consulta).fetchone()
-
-#     if resultado:
-#         logging.info(
-#         f"Verificação concluída. Iniciando processo de inserção/reinserção de dados no banco analítico..."
-#         )
-#         # Se existir algum registro, executa a função
-#         tabela_destino = tabela_destino
-#         inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio, tabela_destino)    
-    
-#     else:
-#         # Obter sumário de resposta
-#         response = {
-#             "status": "Skipped",
-#             "estado": uf_sigla,
-#             "periodo": f"{periodo_data_inicio:%y%m}"
-#         }
-
-#         logging.info(
-#             "Essa combinação já foi inserida e é a mais atual. "
-#             f"Nenhum dado foi inserido para {uf_sigla} ({periodo_data_inicio:%y%m})."
-#         )
-
-#         sessao.close()    
-
-#         return response
-    
-
-
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Defina os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
-    tabela_destino = "dados_publicos.siasus_bpa_i_testeloading"
-
-    # Chame a função principal com os parâmetros de teste
-    inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio, tabela_destino)
+#     # Chame a função principal com os parâmetros de teste
+#     inserir_bpa_i_postgres(uf_sigla, periodo_data_inicio)

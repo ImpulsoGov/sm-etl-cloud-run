@@ -11,17 +11,17 @@ import pandas as pd
 import numpy as np
 import logging
 import datetime
+from typing import Final
 from io import StringIO
-
-from google.cloud import storage
 
 import janitor
 from frozendict import frozendict
-from sqlalchemy.orm import Session
 from utilitarios.bd_config import Sessao, tabelas
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
+from utilitarios.cloud_storage import download_from_bucket
+from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe, deletar_conflitos
 from utilitarios.logger_config import logger_config
-from utilitarios.bd_utilitarios import carregar_dataframe
 
 # set up logging to file
 logger_config()
@@ -84,6 +84,7 @@ TIPOS_RAAS_PS: Final[frozendict] = frozendict(
         "unidade_geografica_id": str,
         "criacao_data": "datetime64[ns]",
         "atualizacao_data": "datetime64[ns]",
+        "ftp_arquivo_nome": "object",
     },
 )
 
@@ -94,18 +95,6 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
 ]
 
 
-
-# Baixa arquivo do GCS
-def download_csv_from_gcs(bucket_name, blob_path):
-    """
-    Baixa um arquivo CSV do Google Cloud Storage e retorna como um objeto dataframe do pandas.
-    """
-    bucket = storage.Client().bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    content = blob.download_as_text()
-    raas_ps = pd.read_csv(StringIO(content), dtype=str, index_col=0)
-    return raas_ps
-
 def transformar_tipos(
     raas_ps: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -115,7 +104,7 @@ def transformar_tipos(
         f"Forçando tipos para colunas "
     )
 
-    raas_ps_transformada = (
+    raas_ps_transformado = (
         raas_ps 
         # garantir tipos
         .change_type(
@@ -125,129 +114,97 @@ def transformar_tipos(
         )
         .astype(TIPOS_RAAS_PS)
     )
-    memoria_usada = raas_ps_transformada.memory_usage(deep=True).sum() / 10 ** 6
-    logging.debug(        
-        f"Memória ocupada pelo DataFrame transformado: {memoria_usada:.2f} mB."
-    )
-    return raas_ps_transformada
+    return raas_ps_transformado
 
-def validar_raas_ps(raas_ps_transformada: pd.DataFrame) -> pd.DataFrame:
-    assert isinstance(raas_ps_transformada, pd.DataFrame), "Não é um DataFrame"
-    assert len(raas_ps_transformada) > 0, "DataFrame vazio."
-    nulos_por_coluna = raas_ps_transformada.applymap(pd.isna).sum()
-    assert nulos_por_coluna["quantidade_apresentada"] == 0, (
-        "A quantidade apresentada é um valor nulo."
-    )
-    assert nulos_por_coluna["quantidade_aprovada"] == 0, (
-        "A quantidade aprovada é um valor nulo."
-    )
-    assert nulos_por_coluna["realizacao_periodo_data_inicio"] == 0, (
-        "A competência de realização é um valor nulo."
-    )
 
 def inserir_raas_ps_postgres(
     uf_sigla: str,
-    periodo_data_inicio: datetime.date,
-    tabela_destino: str,
+    periodo_data_inicio: datetime.date
 ):
-    session = Sessao()
-    
+    sessao = Sessao()
+    tabela_destino = "dados_publicos.sm_siasus_raas_psicossocial_disseminacao"
+    passo = 100000
+
     try:   
         # Baixar CSV do GCS e carregar em um DataFrame
         path_gcs = f"saude-mental/dados-publicos/siasus/raas-psicossocial/{uf_sigla}/siasus_raas_ps_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"    
         
-        pa = download_csv_from_gcs(
+        raas_ps = download_from_bucket(
             bucket_name="camada-bronze", 
             blob_path=path_gcs)
         
-        # Cria um objeto de lista que conterá dados se o parâmetro de competência fornecido na execução 
-        # da função (periodo_data_inicio) for igual a alguma data de processamento já presente na tabela  
-        tabela_fonte = tabelas[tabela_destino]          
-        query = session.query(tabela_fonte).filter_by(processamento_periodo_data_inicio = periodo_data_inicio)
-        existing_data = query.first()
+        
+        logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
 
+        # Deleta conflitos para evitar duplicação de dados
+        deletar_conflitos(
+            sessao, 
+            tabela_ref = tabelas[tabela_destino], 
+            ftp_arquivo_nome_df = raas_ps['ftp_arquivo_nome'].iloc[0]
+        ) 
 
-        if existing_data:
-            # Filtra os dados do GCS que não possuem `processamento_periodo_data_inicio` igual ao parâmetro periodo_data_inicio
-            pa_filtrada = pa[pa['processamento_periodo_data_inicio'] != periodo_data_inicio.strftime("%Y-%m-%d")]
-
-            if pa_filtrada.empty:
-                raise RuntimeError("Todos os dados possuem uma data de processamento que já existe na "
-                                   + "tabela destino, portanto não foram inseridos.")
-            
-            else: 
-                pa = pa_filtrada            
-                logging.warning(f"Haviam {len(pa)} registros na competência de processamento {periodo_data_inicio}, " 
-                                + f"mas {len(pa) - len(pa_filtrada)} registros não foram incluídos porque apresentavam "
-                                + "data de processamento que já foi inserida na tabela destino.")            
-
-
-        # Obtem tamanho do lote de processamento
-        passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
 
         # Divide o DataFrame em lotes
-        num_lotes = len(pa) // passo + 1
-        pa_lotes = np.array_split(pa, num_lotes)
+        num_lotes = len(raas_ps) // passo + 1
+        raas_ps_lotes = np.array_split(raas_ps, num_lotes)
 
         contador = 0
-        for pa_lote in pa_lotes:
-            pa_transformada = transformar_tipos(
-                sessao=session, 
-                pa=pa_lote,
+        for raas_ps_lote in raas_ps_lotes:
+            raas_ps_transformado = transformar_tipos(
+                raas_ps=raas_ps_lote,
             )
             try:
-                validar_pa(pa_transformada)
+                validar_dataframe(raas_ps_transformado)
             except AssertionError as mensagem:
-                session.rollback()
+                sessao.rollback()
                 raise RuntimeError(
                     "Dados inválidos encontrados após a transformação:"
                     + " {}".format(mensagem),
                 )
 
             carregamento_status = carregar_dataframe(
-                sessao=session,
-                df=pa_transformada,
+                sessao=sessao,
+                df=raas_ps_transformado,
                 tabela_destino=tabela_destino,
                 passo=None,
             )
             if carregamento_status != 0:
-                session.rollback()
+                sessao.rollback()
                 raise RuntimeError(
                     "Execução interrompida em razão de um erro no "
                     + "carregamento."
                 )
-            contador += len(pa_lote)
+            contador += len(raas_ps_lote)
+
+
+        # Registrar na tabela de metadados do FTP
+        logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+        inserir_timestamp_ftp_metadados(
+            sessao, 
+            uf_sigla, 
+            periodo_data_inicio, 
+            coluna_atualizar='timestamp_load_bd',
+            tipo='PS'
+        )
 
         # Se tudo ocorreu sem erros, commita a transação
-        session.commit()
+        sessao.commit()
 
     except Exception as e:
         # Em caso de erro, faz rollback da transação
-        session.rollback()
+        sessao.rollback()
         raise RuntimeError(f"Erro durante a inserção no banco de dados: {format(str(e))}")
 
     finally:
         # Independentemente de sucesso ou falha, fecha a sessão
-        session.close()
+        sessao.close()
 
     response = {
         "status": "OK",
+        "tipo": "PS",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
         "insercoes": contador,
     }
 
     return response
-
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Defina os parâmetros de teste
-    uf_sigla = "AC"
-    periodo_data_inicio = datetime.strptime("2023-02-01", "%Y-%m-%d").date()
-    tabela_destino = "dados_publicos.siasus_pa_testeloading"
-
-    # Chame a função principal com os parâmetros de teste
-    inserir_pa_postgres(uf_sigla, periodo_data_inicio, tabela_destino)

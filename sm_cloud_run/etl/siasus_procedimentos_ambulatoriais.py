@@ -12,20 +12,19 @@ import datetime
 import numpy as np
 import pandas as pd
 from typing import Generator, Final
+from sqlalchemy.orm import Session
 
 # Utilizado no tratamento
 import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
-from sqlalchemy.orm import Session
 from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
-from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados
-
+from utilitarios.datas import agora_gmt_menos3, periodo_por_data
+from utilitarios.geografias import id_sus_para_id_impulso
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
-from utilitarios.datas import agora_gmt_menos3, periodo_por_data
-from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_config import Sessao
 from utilitarios.cloud_storage import upload_to_bucket
 from utilitarios.logger_config import logger_config
@@ -158,28 +157,41 @@ def transformar_pa(
     periodo_data_inicio: datetime.date,
 ) -> pd.DataFrame:
     """Transforma um `DataFrame` de procedimentos ambulatoriais do SIASUS.
-    
-    Argumentos:
-        sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
-            acessar a base de dados da ImpulsoGov.
-        pa: objeto [`pandas.DataFrame`][] contendo os dados de um arquivo de
-            disseminação de procedimentos ambulatoriais do SIASUS, conforme
-            extraídos para uma unidade federativa e competência (mês) pela
-            função [`extrair_pa()`][].
 
-    Note:
-        Para otimizar a performance, os filtros são aplicados antes de qualquer
-        outra transformação nos dados, de forma que as condições fornecidas
-        devem considerar que o nome, os tipos e os valores aparecem exatamente
-        como registrados no arquivo de disseminação disponibilizado no FTP
-        público do DataSUS. Verifique o [Informe Técnico][it-siasus] para mais
-        informações.
+    Esta função realiza uma série de operações de transformação em um `DataFrame` 
+    que contém dados de procedimentos ambulatoriais extraídos do SIASUS. 
+    As transformações incluem filtragem de registros, renomeação de colunas, 
+    tratamento de valores nulos, e a adição de colunas específicas, entre outras 
+    operações.
 
-    [`sqlalchemy.orm.session.Session`]: https://docs.sqlalchemy.org/en/14/orm/session_api.html#sqlalchemy.orm.Session
-    [`pandas.DataFrame`]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html
-    [`extrair_pa()`]: impulsoetl.siasus.procedimentos.extrair_pa
-    [`pandas.DataFrame.query()`]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.query.html
-    [it-siasus]: https://drive.google.com/file/d/1DC5093njSQIhMHydYptlj2rMbrMF36y6
+    Parâmetros:
+        sessao (sqlalchemy.orm.session.Session): 
+            Sessão de banco de dados usada para acessar a base de dados da ImpulsoGov.
+        pa (pandas.DataFrame): 
+            DataFrame contendo os dados de procedimentos ambulatoriais, conforme 
+            extraídos para uma unidade federativa e competência (mês) específica.
+        uf_sigla (str): 
+            Sigla da unidade federativa para a qual os dados foram extraídos.
+        periodo_data_inicio (datetime.date): 
+            Data de início do período (mês e ano) correspondente aos dados extraídos.
+
+    Retorno:
+        pandas.DataFrame: 
+            DataFrame transformado com os procedimentos ambulatoriais, pronto 
+            para ser inserido ou atualizado na base de dados.
+
+    Notas:
+        - Os filtros são aplicados antecipadamente para otimizar a performance. 
+        Isso significa que os nomes, tipos e valores das colunas devem corresponder 
+        exatamente aos registros originais do arquivo de disseminação disponível no 
+        FTP público do DataSUS. Consulte o Informe Técnico do SIASUS para mais 
+        detalhes.
+
+    Referências:
+        - [`sqlalchemy.orm.session.Session`](https://docs.sqlalchemy.org/en/14/orm/session_api.html#sqlalchemy.orm.Session): API de Sessão do SQLAlchemy.
+        - [`pandas.DataFrame`](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.html): API do DataFrame do Pandas.
+        - [`pandas.DataFrame.query()`]: https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.query.html
+        - [it-siasus]: https://drive.google.com/file/d/1DC5093njSQIhMHydYptlj2rMbrMF36y6
     """
     logging.info(
         f"Transformando DataFrame com {len(pa)} procedimentos "
@@ -310,10 +322,10 @@ def transformar_pa(
             dest_column_name="servico_classificacao_id_sigtap",
         )
         .remove_columns("servico_especializado_id_scnes")
+
         # adicionar id
         .add_column("id", str())
         .transform_column("id", function=lambda _: uuid7().hex)
-
 
         # adicionar id do periodo
         .transform_column(
@@ -341,8 +353,8 @@ def transformar_pa(
             "ftp_arquivo_nome",
             f"PA{uf_sigla}{periodo_data_inicio:%y%m}"
         )
-
     )
+
     memoria_usada = pa_transformada.memory_usage(deep=True).sum() / 10 ** 6
     logging.debug(        
         f"Memória ocupada pelo DataFrame transformado: {memoria_usada:.2f} mB."
@@ -440,7 +452,6 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
         dados=df_final.to_csv(index=False)
     )
 
-
     # Registrar na tabela de metadados do FTP
     logging.info("Inserindo timestamp na tabela de metadados do FTP...")
     inserir_timestamp_ftp_metadados(
@@ -450,7 +461,6 @@ def baixar_e_processar_pa(uf_sigla: str, periodo_data_inicio: datetime.date):
         coluna_atualizar='timestamp_etl_gcs',
         tipo='PA'
     )
-
 
     # Obter sumário de resposta
     response = {

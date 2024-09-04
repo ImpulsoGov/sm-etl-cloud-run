@@ -15,15 +15,12 @@ from typing import Final
 
 import janitor
 from frozendict import frozendict
-from sqlalchemy.orm import Session
-from sqlalchemy import select, or_, null
 from utilitarios.bd_config import Sessao, tabelas
-from utilitarios.airflow_utilitarios import inserir_timestamp_ftp_metadados, verificar_e_executar
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
 from utilitarios.cloud_storage import download_from_bucket
-from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe
+from utilitarios.bd_utilitarios import carregar_dataframe, validar_dataframe, deletar_conflitos
 from utilitarios.logger_config import logger_config
-
 
 # set up logging to file
 logger_config()
@@ -108,7 +105,6 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
 
 
 def transformar_tipos(
-    sessao: Session,
     pa: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -116,7 +112,7 @@ def transformar_tipos(
     logging.info(
         f"Forçando tipos para colunas "
     )
-    pa_transformada = (
+    pa_transformado = (
         pa  
         # garantir tipos
         .change_type(
@@ -126,7 +122,7 @@ def transformar_tipos(
         )
         .astype(TIPOS_PA)
     )
-    return pa_transformada
+    return pa_transformado
 
 
 def inserir_pa_postgres(
@@ -134,8 +130,8 @@ def inserir_pa_postgres(
     periodo_data_inicio: datetime.date
 ):
     sessao = Sessao()
-
-    tabela_destino = "saude_mental.siasus_procedimentos_ambulatoriais_sm_municipios"
+    tabela_destino = "dados_publicos.sm_siasus_procedimentos_ambulatoriais"
+    passo = 100000
     
     try:   
         # Baixar CSV do GCS e carregar em um DataFrame
@@ -143,32 +139,16 @@ def inserir_pa_postgres(
         
         pa = download_from_bucket(
             bucket_name="camada-bronze", 
-            blob_path=path_gcs)
-        
+            blob_path=path_gcs)        
 
-        logging.info("Verificando necessidade de exclusão de registros da tabela destino...")
-        # Obtem valor do nome do arquivo baixado do FTP e gravado no dataframe        
-        ftp_arquivo_nome_df = pa['ftp_arquivo_nome'].iloc[0]
-        tabela_ref = tabelas[tabela_destino]
-  
+        logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
 
-        # Deleta linhas conflitantes
-        delete_result = sessao.execute(
-            tabela_ref.delete()
-            .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
-        )
-        num_deleted = delete_result.rowcount
-
-        # Verifica se alguma linha foi deletada
-        if num_deleted > 0:
-            logging.info(f"Número de linhas deletadas: {num_deleted}")
-        else:
-            logging.info("Nenhum registro foi deletado.")
-
-
-        # Tamanho do lote de processamento
-        # passo = int(os.getenv("IMPULSOETL_LOTE_TAMANHO", 100000))
-        passo = 100000
+        # Deleta conflitos para evitar duplicação de dados
+        deletar_conflitos(
+            sessao, 
+            tabela_ref = tabelas[tabela_destino], 
+            ftp_arquivo_nome_df = pa['ftp_arquivo_nome'].iloc[0]
+        ) 
 
         # Divide o DataFrame em lotes
         num_lotes = len(pa) // passo + 1
@@ -176,12 +156,11 @@ def inserir_pa_postgres(
 
         contador = 0
         for pa_lote in pa_lotes:
-            pa_transformada = transformar_tipos(
-                sessao=sessao, 
+            pa_transformado = transformar_tipos(
                 pa=pa_lote,
             )
             try:
-                validar_dataframe(pa_transformada)
+                validar_dataframe(pa_transformado)
             except AssertionError as mensagem:
                 sessao.rollback()
                 raise RuntimeError(
@@ -191,7 +170,7 @@ def inserir_pa_postgres(
 
             carregamento_status = carregar_dataframe(
                 sessao=sessao,
-                df=pa_transformada,
+                df=pa_transformado,
                 tabela_destino=tabela_destino,
                 passo=None,
             )
@@ -213,7 +192,6 @@ def inserir_pa_postgres(
             coluna_atualizar='timestamp_load_bd',
             tipo='PA'
         )
-
 
         # Se tudo ocorreu sem erros, commita a transação
         sessao.commit()
@@ -238,21 +216,5 @@ def inserir_pa_postgres(
     return response
 
 
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Defina os parâmetros de teste
-    uf_sigla = "PI"
-    periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
-
-    # Chame a função principal com os parâmetros de teste
-    verificar_e_executar(
-        uf_sigla=uf_sigla, 
-        periodo_data_inicio=periodo_data_inicio, 
-        tipo="PA", 
-        acao="inserir"
-    )
 
 

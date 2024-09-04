@@ -7,26 +7,25 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 ###
 
 import re
-import sys
 import logging
 import datetime
 import numpy as np
 import pandas as pd
 from typing import Generator, Final
+from sqlalchemy.orm import Session
 
 # Utilizado no tratamento
 import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
-from sqlalchemy.orm import Session
-from sqlalchemy import select, or_, null
-from utilitarios.config_painel_sm import municipios_painel, condicoes_bpa_i, inserir_timestamp_ftp_metadados
+from utilitarios.config_painel_sm import municipios_painel, condicoes_bpa_i
+from utilitarios.datas import agora_gmt_menos3, periodo_por_data, de_aaaammdd_para_timestamp
+from utilitarios.geografias import id_sus_para_id_impulso
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
 # Utilitarios
 from utilitarios.datasus_ftp import extrair_dbc_lotes
-from utilitarios.datas import agora_gmt_menos3, periodo_por_data, de_aaaammdd_para_timestamp
-from utilitarios.geografias import id_sus_para_id_impulso
-from utilitarios.bd_config import Sessao, tabelas
+from utilitarios.bd_config import Sessao
 from utilitarios.cloud_storage import upload_to_bucket
 from utilitarios.logger_config import logger_config
 
@@ -170,7 +169,7 @@ def transformar_bpa_i(
     )
 
 
-    # aplica condições de filtragem dos registros
+    # aplica condições de filtragem de SM nos registros
     logging.info(
         f"Filtrando DataFrame com {len(bpa_i)} registros de BPA-i.",
     )
@@ -178,14 +177,7 @@ def transformar_bpa_i(
     logging.info(
         f"Registros após aplicar filtro: {len(bpa_i)}."
     )
-
-
-    # aplica filtragem para municípios participantes (procedimento registrado no muni ou paciente residente no muni)
-    filtragem_municipios = f"(UFMUN in {municipios_painel}) or (MUNPAC in {municipios_painel})"
-    bpa_i = bpa_i.query(filtragem_municipios, engine="python")
-    logging.info(
-        f"Registros após aplicar filtro de seleção de municípios: {len(bpa_i)}."
-    )
+    
 
     bpa_i_transformada = (
         bpa_i  # noqa: WPS221  # ignorar linha complexa no pipeline
@@ -315,6 +307,8 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
         bpa_i_transformada = transformar_bpa_i(
             sessao=sessao,
             bpa_i=bpa_i_lote,
+            uf_sigla=uf_sigla,
+            periodo_data_inicio=periodo_data_inicio,
         )
 
         dfs_transformados.append(bpa_i_transformada)
@@ -322,7 +316,7 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     logging.info("Concatenando lotes de dataframes transformados e validados.")
     df_final = pd.concat(dfs_transformados, ignore_index=True)
-    logging.info(f"{contador} registros concatenadosno dataframe.")    
+    logging.info(f"{contador} registros concatenados no dataframe.")    
 
     # Salvar no GCS
     logging.info("Realizando upload para bucket do GCS...")
@@ -332,7 +326,7 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
-        dados=df_final.to_csv()
+        dados=df_final.to_csv(index=False)
     )
 
     # Registrar na tabela de metadados do FTP
@@ -345,6 +339,7 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
         tipo='BI'
     )
 
+    # Obter sumário de resposta
     response = {
         "status": "OK",
         "estado": uf_sigla,
@@ -362,68 +357,3 @@ def baixar_e_processar_bpa_i(uf_sigla: str, periodo_data_inicio: datetime.date):
 
     return response
 
-
-def verificar_e_executar(
-    uf_sigla: str, 
-    periodo_data_inicio: datetime.date
-):
-    
-    logging.info(
-        f"Verificando se BPA-i de {uf_sigla} ({periodo_data_inicio:%y%m}) precisa ser baixado..."
-    )
-    sessao = Sessao()
-        
-    tabela_metadados_ftp = tabelas["saude_mental.sm_metadados_ftp"]          
-
-    # Construa a query usando SQL Core
-    consulta = (
-        select(tabela_metadados_ftp)
-        .where(
-            tabela_metadados_ftp.c.tipo == 'BI',
-            tabela_metadados_ftp.c.sigla_uf == uf_sigla,
-            tabela_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio,
-            or_(
-                tabela_metadados_ftp.c.timestamp_modificacao_ftp > tabela_metadados_ftp.c.timestamp_etl_gcs,
-                tabela_metadados_ftp.c.timestamp_etl_gcs.is_(null())
-            )
-        )
-    )
-
-    # Execute a consulta usando `session.execute` com a expressão SQL Core
-    resultado = sessao.execute(consulta).fetchone()
-
-    if resultado:
-        logging.info(
-        f"Verificação concluída. Iniciando processo de download."
-        )
-        # Se existir algum registro, executa a função
-        baixar_e_processar_bpa_i(uf_sigla, periodo_data_inicio)    
-    
-    else:
-        # Obter sumário de resposta
-        response = {
-            "status": "Skipped",
-            "estado": uf_sigla,
-            "periodo": f"{periodo_data_inicio:%y%m}"
-        }
-
-        logging.info(
-            "Essa combinação já foi baixada e é a mais atual. "
-            f"Nenhum dado de BPA-i foi baixado para {uf_sigla} ({periodo_data_inicio:%y%m})."
-        )
-
-        sessao.close()    
-
-        return response
-    
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Define os parâmetros de teste
-    uf_sigla = "AL"
-    periodo_data_inicio = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
-
-    # Chama a função principal com os parâmetros de teste
-    verificar_e_executar(uf_sigla, periodo_data_inicio)
