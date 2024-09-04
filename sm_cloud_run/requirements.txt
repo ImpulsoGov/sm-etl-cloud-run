@@ -9,6 +9,7 @@ pysus==0.6.0
 pyjanitor==0.21.2
 frozendict==2.1.1
 uuid6==2022.6.25
+roman==3.3
 
 sqlalchemy[mypy]==1.4.27
 psycopg2-binary==2.9.4

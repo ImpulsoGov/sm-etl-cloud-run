@@ -234,10 +234,12 @@ def obter_metadados_combinados():
     logging.info("Conexão com FTP aberta...")
     metadados_siasus = extrair_metadados_ftp('/dissemin/publicos/SIASUS/200801_/Dados', ('BI', 'PS', 'PA'))
     metadados_sihsus = extrair_metadados_ftp('/dissemin/publicos/SIHSUS/200801_/Dados', ('RD',))
+    metadados_cnes_hb = extrair_metadados_ftp('/dissemin/publicos/CNES/200508_/Dados/HB', ('HB',))
+    metadados_cnes_pf = extrair_metadados_ftp('/dissemin/publicos/CNES/200508_/Dados/PF', ('PF',))
     logging.info("Conexão com FTP encerrada.")
 
-    logging.info("Concatenando DataFrames do SIASUS e SIHSUS...")
-    metadados_combinados = pd.concat([metadados_siasus, metadados_sihsus], ignore_index=True)
+    logging.info("Concatenando DataFrames do SIASUS, SIHSUS e CNES...")
+    metadados_combinados = pd.concat([metadados_siasus, metadados_sihsus, metadados_cnes_hb, metadados_cnes_pf], ignore_index=True)
 
     logging.info("Aplicando tratamentos...")
     meta_transformado = transformar_metadados(metadados_combinados)
@@ -276,7 +278,7 @@ def upsert_dados_no_postgres():
     df = obter_metadados_combinados()
     sessao = Sessao()
     tabela_fonte_orm = MetaData  # Use the ORM model here
-    tabela_fonte = tabelas["saude_mental.sm_metadados_ftp"]   
+    tabela_fonte = tabelas["_saude_mental_configuracoes.sm_metadados_ftp"]   
     logging.info(f"Iniciando operações de atualização/deleção/upsert dos dados na {tabela_fonte}...")
 
     # Inicializa contadores
