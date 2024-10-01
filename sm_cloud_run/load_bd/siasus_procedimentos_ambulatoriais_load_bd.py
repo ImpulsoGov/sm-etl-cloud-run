@@ -103,6 +103,11 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
     if tipo_coluna.lower() == "int64" or tipo_coluna.lower() == "float64"
 ]
 
+COLUNAS_BOOLEANAS: Final[list[str]] = [
+    nome_coluna
+    for nome_coluna, tipo_coluna in TIPOS_PA.items()
+    if tipo_coluna == "bool"
+]
 
 def transformar_tipos(
     pa: pd.DataFrame,
@@ -119,6 +124,10 @@ def transformar_tipos(
             # HACK: ver https://github.com/pandas-dev/pandas/issues/25472
             COLUNAS_NUMERICAS,
             "float",
+        )
+        .transform_columns(
+            COLUNAS_BOOLEANAS,
+            function=lambda elemento: True if elemento == "True" else False,
         )
         .astype(TIPOS_PA)
     )

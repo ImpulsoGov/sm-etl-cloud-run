@@ -156,6 +156,11 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
     if tipo_coluna.lower() == "int64" or tipo_coluna.lower() == "float64"
 ]
 
+COLUNAS_BOOLEANAS: Final[list[str]] = [
+    nome_coluna
+    for nome_coluna, tipo_coluna in TIPOS_AIH_RD.items()
+    if tipo_coluna == "bool"
+]
 
 def transformar_tipos(
     aih_rd: pd.DataFrame,
@@ -171,6 +176,10 @@ def transformar_tipos(
         # garantir tipos
         # HACK: ver https://github.com/pandas-dev/pandas/issues/25472
         .astype({col: "float" for col in COLUNAS_NUMERICAS})
+        .transform_columns(
+            COLUNAS_BOOLEANAS,
+            function=lambda elemento: True if elemento == "True" else False,
+        )
         .astype(TIPOS_AIH_RD)
     )
     return aih_rd_transformado

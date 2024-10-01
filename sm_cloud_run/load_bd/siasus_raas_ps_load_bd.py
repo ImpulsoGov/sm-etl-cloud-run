@@ -79,9 +79,9 @@ TIPOS_RAAS_PS: Final[frozendict] = frozendict(
         "quantidade_atendimentos": "Int64",
         "quantidade_usuarios": "Int64",
         "estabelecimento_natureza_juridica_id_scnes": "object",
-        "id": str,
-        "periodo_id": str,
-        "unidade_geografica_id": str,
+        "id": "object",
+        "periodo_id": "object",
+        "unidade_geografica_id": "object",
         "criacao_data": "datetime64[ns]",
         "atualizacao_data": "datetime64[ns]",
         "ftp_arquivo_nome": "object",
@@ -92,6 +92,12 @@ COLUNAS_NUMERICAS: Final[list[str]] = [
     nome_coluna
     for nome_coluna, tipo_coluna in TIPOS_RAAS_PS.items()
     if tipo_coluna == "Int64"
+]
+
+COLUNAS_BOOLEANAS: Final[list[str]] = [
+    nome_coluna
+    for nome_coluna, tipo_coluna in TIPOS_RAAS_PS.items()
+    if tipo_coluna == "bool"
 ]
 
 
@@ -112,6 +118,10 @@ def transformar_tipos(
             COLUNAS_NUMERICAS,
             "float",
         )
+        .transform_columns(
+            COLUNAS_BOOLEANAS,
+            function=lambda elemento: True if elemento == "True" else False,
+        )
         .astype(TIPOS_RAAS_PS)
     )
     return raas_ps_transformado
@@ -131,7 +141,8 @@ def inserir_raas_ps_postgres(
         
         raas_ps = download_from_bucket(
             bucket_name="camada-bronze", 
-            blob_path=path_gcs)
+            blob_path=path_gcs
+        )
         
         
         logging.info("Iniciando processo de exclusão de registros da tabela destino (se necessário)...")
@@ -208,3 +219,10 @@ def inserir_raas_ps_postgres(
     }
 
     return response
+
+
+# # RODAR LOCALMENTE
+# if __name__ == "__main__":
+#     from datetime import datetime
+#     periodo_data_inicio = datetime.strptime("2024-06-01", "%Y-%m-%d").date()
+#     inserir_raas_ps_postgres("ES", periodo_data_inicio)
