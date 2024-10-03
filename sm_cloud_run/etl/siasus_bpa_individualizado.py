@@ -87,7 +87,7 @@ COLUNAS_DATA_AAAAMM: Final[list[str]] = [
 def extrair_bpa_i(
     uf_sigla: str,
     periodo_data_inicio: datetime.date,
-    passo: int = 100000,
+    passo: int = 200000,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai registros de Boletins de Produção Ambulatorial do FTP do DataSUS.
 

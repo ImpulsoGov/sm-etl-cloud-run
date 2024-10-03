@@ -117,7 +117,7 @@ def _para_booleano(valor: str) -> bool | float:
 def extrair_pa(
     uf_sigla: str,
     periodo_data_inicio: datetime.date,
-    passo: int = 500000,
+    passo: int = 200000,
 ) -> Generator[pd.DataFrame, None, None]:
     """Extrai registros de procedimentos ambulatoriais do FTP do DataSUS.
 

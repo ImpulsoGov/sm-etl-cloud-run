@@ -19,7 +19,7 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 import roman
-from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
+from utilitarios.config_painel_sm import municipios_painel
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
