@@ -76,7 +76,7 @@ Base = declarative_base()
 
 class MetaData(Base):
     __tablename__ = "sm_metadados_ftp"
-    __table_args__ = {'schema': 'saude_mental'}
+    __table_args__ = {'schema': '_saude_mental_configuracoes'}
     tipo = Column(String)
     sigla_uf = Column(String)
     ano = Column(String)

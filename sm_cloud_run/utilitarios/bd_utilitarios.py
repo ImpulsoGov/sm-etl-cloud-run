@@ -26,7 +26,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError, InvalidRequestError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.schema import MetaData, Table
-from sqlalchemy.sql import update, and_
+from sqlalchemy.sql import update, and_, select, insert
 import logging
 
 
@@ -336,3 +336,54 @@ def inserir_timestamp_ftp_metadados(
         sessao.rollback()
         print(f"Erro ao atualizar timestamp: {e}")
 
+
+
+def inserir_timestamp_sisab_metadados(
+    sessao: Session,
+    periodo_data_inicio: datetime.date,
+    municipios_painel: str, 
+    coluna_atualizar: Literal['timestamp_etl_gcs', 'timestamp_load_bd'],
+    tipo: Literal['SISAB_tipo_equipe', 'SISAB_resolutividade_condicao']
+):
+    """
+    Insere ou atualiza um timestamp na tabela _saude_mental_configuracoes.sm_metadados_sisab 
+    com base no valor de periodo_data_inicio.
+
+    Argumentos:
+        sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
+            acessar a base de dados da ImpulsoGov.
+        periodo_data_inicio (datetime.date): Data de início do período.
+        coluna_atualizar (str): Nome da coluna do timestamp a ser atualizado.
+        
+    Retorna:
+        None
+    """
+    from utilitarios.bd_config import tabelas
+
+    sm_metadados_sisab = tabelas["_saude_mental_configuracoes.sm_metadados_sisab"]
+
+    try:
+        timestamp_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        requisicao_atualizar = (
+            update(sm_metadados_sisab)
+            .where(and_(
+                sm_metadados_sisab.c.periodo_data_inicio == periodo_data_inicio),
+                sm_metadados_sisab.c.tipo == tipo
+            )
+            .values({
+                coluna_atualizar: timestamp_atual, 
+                "municipios_id_sus": municipios_painel,
+                })
+        )
+        sessao.execute(requisicao_atualizar)
+        logging.info(f"Timestamp atualizado para o período {periodo_data_inicio}.")
+
+        # Commit da transação
+        sessao.commit()
+        
+    except Exception as e:
+        # Em caso de erro, desfaz a transação
+        sessao.rollback()
+        logging.error(f"Erro ao inserir ou atualizar timestamp: {e}")
+        raise

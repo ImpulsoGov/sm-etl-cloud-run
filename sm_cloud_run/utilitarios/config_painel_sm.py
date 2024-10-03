@@ -1,5 +1,23 @@
 from __future__ import annotations
 
+from utilitarios.bd_config import tabelas
+from sqlalchemy import select
+from sqlalchemy.orm import Query, Session
+
+
+def municipios_ativos_painel(
+    sessao: Session,
+):
+    tabela_municipios = tabelas["_saude_mental_configuracoes.sm_municipios_painel"]
+    query = select(tabela_municipios.c.id_sus).where(tabela_municipios.c.status_ativo == True)
+
+    # Execute the query and fetch all results
+    result = sessao.execute(query).fetchall()
+
+    # Extract the id_sus values from the query result into a list
+    municipios_painel = [row.id_sus for row in result]
+
+    return municipios_painel
 
 municipios_painel = [
     "150140",
