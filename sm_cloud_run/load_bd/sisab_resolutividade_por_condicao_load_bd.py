@@ -84,27 +84,27 @@ def transformar_tipos(
     return df_tratado
 
 
-def obter_lista_registros_inseridos(
-    sessao: Session,
-    tabela_destino: str,
-) -> Query:
-    """Obtém lista de registro da períodos que já constam na tabela.
-    Argumentos:
-        sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
-        acessar a base de dados da ImpulsoGov.
-        tabela_destino: Tabela que irá acondicionar os dados.
-    Retorna:
-        Lista de períodos que já constam na tabela destino 
-    [`sqlalchemy.orm.session.Session`]: https://docs.sqlalchemy.org/en/14/orm/session_api.html#sqlalchemy.orm.Session
-    """
+# def obter_lista_registros_inseridos(
+#     sessao: Session,
+#     tabela_destino: str,
+# ) -> Query:
+#     """Obtém lista de registro da períodos que já constam na tabela.
+#     Argumentos:
+#         sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
+#         acessar a base de dados da ImpulsoGov.
+#         tabela_destino: Tabela que irá acondicionar os dados.
+#     Retorna:
+#         Lista de períodos que já constam na tabela destino 
+#     [`sqlalchemy.orm.session.Session`]: https://docs.sqlalchemy.org/en/14/orm/session_api.html#sqlalchemy.orm.Session
+#     """
 
-    tabela = tabelas[tabela_destino]
-    registros = sessao.query(tabela.c.periodo_data_inicio).distinct(
-        tabela.c.periodo_data_inicio
-    )
+#     tabela = tabelas[tabela_destino]
+#     registros = sessao.query(tabela.c.periodo_data_inicio).distinct(
+#         tabela.c.periodo_data_inicio
+#     )
 
-    logging.info("Leitura dos períodos inseridos no banco Impulso OK!")
-    return registros
+#     logging.info("Leitura dos períodos inseridos no banco Impulso OK!")
+#     return registros
 
 
 def carregar_dados(
@@ -118,11 +118,11 @@ def carregar_dados(
     logging.info("Excluíndo registros se houver atualização retroativa...")
     
     tabela_relatorio_producao = tabelas[tabela_destino]
-    registros_inseridos = obter_lista_registros_inseridos(sessao, tabela_destino)
+    # registros_inseridos = obter_lista_registros_inseridos(sessao, tabela_destino)
 
-    if any(
-        [registro.periodo_data_inicio == periodo_data_inicio for registro in registros_inseridos]
-    ):
+
+
+    try:
         limpar = (
             delete(tabela_relatorio_producao)
             .where(tabela_relatorio_producao.c.periodo_data_inicio == periodo_data_inicio)
@@ -131,16 +131,15 @@ def carregar_dados(
         resultado = sessao.execute(limpar)
         logging.info(f"Número de linhas deletadas: {resultado.rowcount}")
 
-    logging.info("Baixando dados do GCS...")
-    # Baixar CSV do GCS e carregar em um DataFrame
-    path_gcs = f"saude-mental/dados-publicos/sisab/conduta-por-condicao/sisab_resolutividade_por_condicao_{periodo_data_inicio:%y%m}.csv"       
+        logging.info("Baixando dados do GCS...")
+        # Baixar CSV do GCS e carregar em um DataFrame
+        path_gcs = f"saude-mental/dados-publicos/sisab/conduta-por-condicao/sisab_resolutividade_por_condicao_{periodo_data_inicio:%y%m}.csv"       
+        df_extraido = sisab_download_from_bucket(
+            bucket_name="camada-bronze", 
+            blob_path=path_gcs
+        ) 
 
-    df_extraido = sisab_download_from_bucket(
-        bucket_name="camada-bronze", 
-        blob_path=path_gcs
-    ) 
 
-    try:
         logging.info("Compatibilizando tipos...")
         df_tratado = transformar_tipos(
             df_extraido=df_extraido

@@ -166,20 +166,19 @@ def verificar_e_executar_sisab(
     
     sessao = Sessao()
     tabela_metadados_sisab = tabelas["_saude_mental_configuracoes.sm_metadados_sisab"]
-    timestamp_atual = datetime.now()
 
-    # Calcula a data de três meses completos atrás, considerando meses inteiros, para atualização retroativa
-    data_limite = (timestamp_atual.replace(day=1) - relativedelta(months=3))
-    inicio_mes_atual = timestamp_atual.replace(day=1)
+    # Calcula a data de três meses completos atrás, considerando meses inteiros, para atualização retroativa, acrescido de 2 meses de atraso na disponibilização dos dados
+    timestamp_atual = datetime.now().date()
+    data_limite_min = (timestamp_atual.replace(day=1) - relativedelta(months=5))
+    data_limite_max = (timestamp_atual.replace(day=1) - relativedelta(months=2))
 
     # Query genérica para consultar necessidade de inserção ou download
     if acao == 'baixar':
-        condicao_null = tabela_metadados_sisab.c.timestamp_etl_gcs.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio < timestamp_atual)
-        # condicao_timestamp = tabela_metadados_sisab.c.timestamp_etl_gcs >= data_limite
-        condicao_timestamp = (tabela_metadados_sisab.c.timestamp_etl_gcs >= data_limite) & (tabela_metadados_sisab.c.timestamp_etl_gcs < inicio_mes_atual)
+        condicao_null = tabela_metadados_sisab.c.timestamp_etl_gcs.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max)
+        condicao_timestamp = (tabela_metadados_sisab.c.timestamp_etl_gcs < timestamp_atual) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max) & (tabela_metadados_sisab.c.periodo_data_inicio >= data_limite_min)
 
     elif acao == 'inserir':
-        condicao_null = tabela_metadados_sisab.c.timestamp_load_bd.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio < timestamp_atual)
+        condicao_null = tabela_metadados_sisab.c.timestamp_load_bd.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max)
         condicao_timestamp = tabela_metadados_sisab.c.timestamp_etl_gcs > tabela_metadados_sisab.c.timestamp_load_bd
     else:
         raise ValueError("Ação inválida. Use 'inserir' ou 'baixar'.")
