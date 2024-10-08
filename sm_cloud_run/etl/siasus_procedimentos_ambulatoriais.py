@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
-from utilitarios.config_painel_sm import municipios_painel, condicoes_pa
+from utilitarios.config_painel_sm import municipios_ativos_painel, condicoes_pa
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
@@ -204,6 +204,7 @@ def transformar_pa(
 
 
     # aplica filtragem para municípios participantes (procedimento registrado no muni ou paciente residente no muni)
+    municipios_painel = municipios_ativos_painel(sessao)
     filtragem_municipios = f"(PA_UFMUN in {municipios_painel}) or (PA_MUNPCN in {municipios_painel})"
     pa = pa.query(filtragem_municipios, engine="python")
     logging.info(

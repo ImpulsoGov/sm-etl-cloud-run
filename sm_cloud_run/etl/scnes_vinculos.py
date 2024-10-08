@@ -19,8 +19,8 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 import roman
-from utilitarios.config_painel_sm import municipios_painel, condicoes_bpa_i
-from utilitarios.datas import agora_gmt_menos3, periodo_por_data, de_aaaammdd_para_timestamp
+from utilitarios.config_painel_sm import municipios_ativos_painel
+from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 
@@ -178,6 +178,7 @@ def transformar_vinculos(
     )
 
     # aplica filtragem para municípios participantes 
+    municipios_painel = municipios_ativos_painel(sessao)
     filtragem_municipios = f"(CODUFMUN in {municipios_painel})"
     vinculos = vinculos.query(filtragem_municipios, engine="python")
     logging.info(

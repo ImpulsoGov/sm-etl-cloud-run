@@ -19,7 +19,7 @@ import janitor
 from frozendict import frozendict
 from uuid6 import uuid7
 import roman
-from utilitarios.config_painel_sm import municipios_painel
+from utilitarios.config_painel_sm import municipios_ativos_painel
 from utilitarios.datas import agora_gmt_menos3, periodo_por_data
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
@@ -175,6 +175,7 @@ def transformar_habilitacoes(
 
 
     # aplica filtragem para municípios participantes 
+    municipios_painel = municipios_ativos_painel(sessao)
     filtragem_municipios = f"(CODUFMUN in {municipios_painel})"
     habilitacoes = habilitacoes.query(filtragem_municipios, engine="python")
     logging.info(
@@ -389,3 +390,17 @@ def baixar_e_processar_habilitacoes(uf_sigla: str, periodo_data_inicio: datetime
     sessao.close()
 
     return response
+
+
+# RODAR LOCALMENTE
+if __name__ == "__main__":
+    from datetime import datetime
+
+    # Define os parâmetros de teste
+    periodo_data_inicio = datetime.strptime("2024-08-01", "%Y-%m-%d").date()
+    
+
+    baixar_e_processar_habilitacoes(
+        uf_sigla='PB',
+        periodo_data_inicio=periodo_data_inicio
+    )
