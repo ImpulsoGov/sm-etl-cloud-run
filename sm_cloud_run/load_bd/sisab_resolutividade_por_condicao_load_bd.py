@@ -113,7 +113,7 @@ def carregar_dados(
     """
     """     
     sessao = Sessao()  
-    tabela_destino = "dados_publicos.sm_sisab_resolutividade_por_condicao_teste"
+    tabela_destino = "dados_publicos.sm_sisab_resolutividade_por_condicao"
     
     logging.info("Excluíndo registros se houver atualização retroativa...")
     

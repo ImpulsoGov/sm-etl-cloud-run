@@ -104,7 +104,7 @@ def carregar_dados(
     """
 
     sessao = Sessao()  
-    tabela_destino = "dados_publicos.sm_sisab_tipo_equipe_por_tipo_producao_teste"
+    tabela_destino = "dados_publicos.sm_sisab_tipo_equipe_por_tipo_producao"
     
     logging.info("Excluíndo registros se houver atualização retroativa...")
     
