@@ -174,11 +174,11 @@ def verificar_e_executar_sisab(
 
     # Query genérica para consultar necessidade de inserção ou download
     if acao == 'baixar':
-        condicao_null = tabela_metadados_sisab.c.timestamp_etl_gcs.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max)
+        condicao_null = tabela_metadados_sisab.c.timestamp_etl_gcs.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max) &  (tabela_metadados_sisab.c.periodo_data_inicio >= data_limite_min)
         condicao_timestamp = (tabela_metadados_sisab.c.timestamp_etl_gcs < timestamp_atual) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max) & (tabela_metadados_sisab.c.periodo_data_inicio >= data_limite_min)
 
     elif acao == 'inserir':
-        condicao_null = tabela_metadados_sisab.c.timestamp_load_bd.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max)
+        condicao_null = tabela_metadados_sisab.c.timestamp_load_bd.is_(null()) & (tabela_metadados_sisab.c.periodo_data_inicio <= data_limite_max) & (tabela_metadados_sisab.c.periodo_data_inicio >= data_limite_min)
         condicao_timestamp = tabela_metadados_sisab.c.timestamp_etl_gcs > tabela_metadados_sisab.c.timestamp_load_bd
     else:
         raise ValueError("Ação inválida. Use 'inserir' ou 'baixar'.")
