@@ -8,9 +8,16 @@
 
 from __future__ import annotations
 
+# NECESSARIO PARA RODAR LOCALMENTE: Adiciona o caminho do diretório `sm_cloud_run` ao sys.path
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'sm_cloud_run')))
+###
+
 import csv
 from io import StringIO
-from typing import Iterable, cast
+from typing import Iterable, cast, Literal
+from datetime import datetime
 
 import pandas as pd
 from pandas.io.sql import SQLTable
@@ -19,6 +26,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError, InvalidRequestError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.schema import MetaData, Table
+from sqlalchemy.sql import update, and_, select, insert
 import logging
 
 
@@ -193,8 +201,7 @@ def carregar_dataframe(
     schema_nome, tabela_nome = tabela_destino.split(".", maxsplit=1)
 
     logging.info(
-        f"Carregando {num_registros} registros de procedimentos ambulatoriais "
-        + f"para a tabela `{tabela_destino}`..."
+        f"Carregando {num_registros} registros para a tabela `{tabela_destino}`..."
     )
 
     logging.debug("Formatando colunas de data...")
@@ -249,3 +256,134 @@ def validar_dataframe(
 ) -> pd.DataFrame:
     assert isinstance(df_transformada, pd.DataFrame), "Não é um DataFrame"
     assert len(df_transformada) > 0, "Dataframe vazio."
+
+
+
+def deletar_conflitos(sessao, tabela_ref, ftp_arquivo_nome_df):
+    """
+    Deleta registros conflitantes na tabela de destino com base no nome do arquivo FTP.
+
+    Args:
+        sessao: Sessão ativa do banco de dados.
+        tabela_ref: Referência à tabela de destino.
+        ftp_arquivo_nome_df: Nome do arquivo FTP que serve como referência para deletar os registros.
+
+    Returns:
+        None
+    """
+    delete_result = sessao.execute(
+        tabela_ref.delete()
+        .where(tabela_ref.c.ftp_arquivo_nome == ftp_arquivo_nome_df)
+    )
+    num_deleted = delete_result.rowcount
+
+    if num_deleted > 0:
+        logging.info(f"Número de linhas deletadas: {num_deleted}")
+    else:
+        logging.info("Nenhum registro foi deletado.")
+
+
+def inserir_timestamp_ftp_metadados(
+    sessao: Session,
+    uf_sigla: str, 
+    periodo_data_inicio: datetime.date,
+    coluna_atualizar: Literal['timestamp_etl_gcs', 'timestamp_load_bd', 'timestamp_etl_ftp_metadados'],
+    tipo: Literal['PA', 'BI', 'PS', 'RD', 'HB', 'PF']
+):
+    """
+    Insere um timestamp na tabela _saude_mental_configuracoes.sm_metadados_ftp quando os 
+    parâmetros uf_sigla e periodo_data_inicio são iguais aos das colunas sigla_uf
+    e processamento_periodo_data_inicio.
+
+    Argumentos:
+        sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
+            acessar a base de dados da ImpulsoGov.
+        uf_sigla (str): Sigla da Unidade Federativa.
+        periodo_data_inicio (datetime.date): Data de início do período.
+        tipo (str): Tipo do ETL a ser utilizado na condição de filtragem. 
+            Valores aceitos:  
+        coluna_atualizar (str): Nome da coluna a ser atualizada.
+
+    Retorna:
+        None
+    """
+    
+    from utilitarios.bd_config import tabelas
+    sm_metadados_ftp = tabelas["_saude_mental_configuracoes.sm_metadados_ftp"]
+
+    try:
+        timestamp_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Cria a requisição de atualização
+        requisicao_atualizar = (
+            update(sm_metadados_ftp)
+            .where(and_(
+                sm_metadados_ftp.c.tipo == tipo, 
+                sm_metadados_ftp.c.sigla_uf == uf_sigla,
+                sm_metadados_ftp.c.processamento_periodo_data_inicio == periodo_data_inicio
+                ) 
+            )
+            .values({coluna_atualizar: timestamp_atual})
+        )
+
+        # Executa a atualização
+        sessao.execute(requisicao_atualizar)
+        sessao.commit()
+        logging.info("Metadados do FTP inseridos com sucesso!")
+        
+    except Exception as e:
+        # Em caso de erro, desfaz a transação
+        sessao.rollback()
+        print(f"Erro ao atualizar timestamp: {e}")
+
+
+
+def inserir_timestamp_sisab_metadados(
+    sessao: Session,
+    periodo_data_inicio: datetime.date,
+    municipios_painel: str, 
+    coluna_atualizar: Literal['timestamp_etl_gcs', 'timestamp_load_bd'],
+    tipo: Literal['SISAB_tipo_equipe', 'SISAB_resolutividade_condicao']
+):
+    """
+    Insere ou atualiza um timestamp na tabela _saude_mental_configuracoes.sm_metadados_sisab 
+    com base no valor de periodo_data_inicio.
+
+    Argumentos:
+        sessao: objeto [`sqlalchemy.orm.session.Session`][] que permite
+            acessar a base de dados da ImpulsoGov.
+        periodo_data_inicio (datetime.date): Data de início do período.
+        coluna_atualizar (str): Nome da coluna do timestamp a ser atualizado.
+        
+    Retorna:
+        None
+    """
+    from utilitarios.bd_config import tabelas
+
+    sm_metadados_sisab = tabelas["_saude_mental_configuracoes.sm_metadados_sisab"]
+
+    try:
+        timestamp_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        requisicao_atualizar = (
+            update(sm_metadados_sisab)
+            .where(and_(
+                sm_metadados_sisab.c.periodo_data_inicio == periodo_data_inicio),
+                sm_metadados_sisab.c.tipo == tipo
+            )
+            .values({
+                coluna_atualizar: timestamp_atual, 
+                "municipios_id_sus": municipios_painel,
+                })
+        )
+        sessao.execute(requisicao_atualizar)
+        logging.info(f"Timestamp atualizado para o período {periodo_data_inicio}.")
+
+        # Commit da transação
+        sessao.commit()
+        
+    except Exception as e:
+        # Em caso de erro, desfaz a transação
+        sessao.rollback()
+        logging.error(f"Erro ao inserir ou atualizar timestamp: {e}")
+        raise

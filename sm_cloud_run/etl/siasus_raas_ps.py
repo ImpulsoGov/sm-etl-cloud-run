@@ -25,6 +25,7 @@ from utilitarios.datas import agora_gmt_menos3, periodo_por_data, de_aaaammdd_pa
 from utilitarios.geografias import id_sus_para_id_impulso
 from utilitarios.bd_config import Sessao
 from utilitarios.cloud_storage import upload_to_bucket
+from utilitarios.bd_utilitarios import inserir_timestamp_ftp_metadados
 from utilitarios.logger_config import logger_config
 
 
@@ -135,6 +136,8 @@ def extrair_raas_ps(
 def transformar_raas_ps(
     sessao: Session,
     raas_ps: pd.DataFrame,
+    uf_sigla: str,
+    periodo_data_inicio: datetime.date,
 ) -> pd.DataFrame:
     """Transforma um `DataFrame` de RAAS obtido do FTP público do DataSUS.
 
@@ -243,10 +246,30 @@ def transformar_raas_ps(
         # adicionar datas de inserção e atualização
         .add_column("criacao_data", agora_gmt_menos3())
         .add_column("atualizacao_data", agora_gmt_menos3())
+
+        # adicionar coluna ftp_arquivo_nome
+        .add_column(
+            "ftp_arquivo_nome",
+            f"PS{uf_sigla}{periodo_data_inicio:%y%m}"
+        )
         
     )
     return raas_ps_transformada
 
+
+def validar_raas_ps(raas_ps_transformada: pd.DataFrame) -> pd.DataFrame:
+    assert isinstance(raas_ps_transformada, pd.DataFrame), "Não é um DataFrame"
+    assert len(raas_ps_transformada) > 0, "DataFrame vazio."
+    nulos_por_coluna = raas_ps_transformada.applymap(pd.isna).sum()
+    assert nulos_por_coluna["quantidade_apresentada"] == 0, (
+        "A quantidade apresentada é um valor nulo."
+    )
+    assert nulos_por_coluna["quantidade_aprovada"] == 0, (
+        "A quantidade aprovada é um valor nulo."
+    )
+    assert nulos_por_coluna["realizacao_periodo_data_inicio"] == 0, (
+        "A competência de realização é um valor nulo."
+    )
 
 
 def baixar_e_processar_raas_ps(uf_sigla: str, periodo_data_inicio: datetime.date):
@@ -279,8 +302,8 @@ def baixar_e_processar_raas_ps(uf_sigla: str, periodo_data_inicio: datetime.date
     dicionário de retorno, juntamente com informações sobre o estado e o 
     período dos dados processados.
     """
-
-    session = Sessao()
+    # Extrair dados
+    sessao = Sessao()
 
     # Extrair dados
     raas_ps_lotes = extrair_raas_ps(
@@ -293,9 +316,20 @@ def baixar_e_processar_raas_ps(uf_sigla: str, periodo_data_inicio: datetime.date
 
     for raas_ps_lote in raas_ps_lotes:
         raas_ps_transformada = transformar_raas_ps(
-            sessao=session,
+            sessao=sessao,
             raas_ps=raas_ps_lote,
+            uf_sigla=uf_sigla,
+            periodo_data_inicio=periodo_data_inicio,
         )
+
+        try:
+            validar_raas_ps(raas_ps_transformada)
+        except AssertionError as mensagem:
+            sessao.rollback()
+            raise RuntimeError(
+                "Dados inválidos encontrados após a transformação:"
+                + " {}".format(mensagem),
+            )
 
         dfs_transformados.append(raas_ps_transformada)
         contador += len(raas_ps_transformada)
@@ -308,40 +342,38 @@ def baixar_e_processar_raas_ps(uf_sigla: str, periodo_data_inicio: datetime.date
     # Salvar no GCS
     logging.info("Realizando upload para bucket do GCS...")
     nome_arquivo_csv = f"siasus_raas_ps_disseminacao_{uf_sigla}_{periodo_data_inicio:%y%m}.csv"
-    path_gcs = f"saude-mental/dados-publicos/siasus/raas-psicossocial/{uf_sigla}/{periodo_data_inicio:%y%m}/{nome_arquivo_csv}"
+    path_gcs = f"saude-mental/dados-publicos/siasus/raas-psicossocial/{uf_sigla}/{nome_arquivo_csv}"
     
-    # Salvar no GCS
     upload_to_bucket(
         bucket_name="camada-bronze", 
         blob_path=path_gcs,
-        dados=df_final.to_csv()
+        dados=df_final.to_csv(index=False)
     )
 
+    # Registrar na tabela de metadados do FTP
+    logging.info("Inserindo timestamp na tabela de metadados do FTP...")
+    inserir_timestamp_ftp_metadados(
+        sessao, 
+        uf_sigla, 
+        periodo_data_inicio, 
+        coluna_atualizar='timestamp_etl_gcs',
+        tipo='PS'
+    )
+
+    # Obter sumário de resposta
     response = {
         "status": "OK",
         "estado": uf_sigla,
         "periodo": f"{periodo_data_inicio:%y%m}",
-        "num_registros": {contador},
+        "num_registros": contador,
         "arquivo_final_gcs": f"gcs://camada-bronze/{path_gcs}",
     }
-
-    session.close()
 
     logging.info(
         f"Processamento de RAAS-ps finalizado para {uf_sigla} ({periodo_data_inicio:%y%m})."
         f"Status: {response['status']}, Número de registros: {response['num_registros']}, Arquivo GCS: {response['arquivo_final_gcs']}"
     )
 
+    sessao.close()
+
     return response
-
-
-# RODAR LOCALMENTE
-if __name__ == "__main__":
-    from datetime import datetime
-
-    # Define os parâmetros de teste
-    uf_sigla = "ES"
-    periodo_data_inicio = datetime.strptime("2024-04-01", "%Y-%m-%d").date()
-
-    # Chama a função principal com os parâmetros de teste
-    baixar_e_processar_raas_ps(uf_sigla, periodo_data_inicio)

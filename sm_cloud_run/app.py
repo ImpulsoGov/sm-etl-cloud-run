@@ -5,13 +5,7 @@ from flask import Flask, request, jsonify
 
 
 from etl.datasus_ftp_metadados import upsert_dados_no_postgres
-
-# from etl.siasus_procedimentos_ambulatoriais import verificar_e_executar
-# from load_bd.siasus_procedimentos_ambulatoriais_l_bd import verificar_e_executar
-from utilitarios.airflow_utilitarios import verificar_e_executar
-
-# from etl.siasus_bpa_individualizado import baixar_e_processar_bpa_i
-# from load_bd.siasus_bpa_individualizado_l_bd import inserir_bpa_i_postgres
+from scripts.verificar_e_executar import verificar_e_executar_ftp, verificar_e_executar_sisab
 
 app = Flask(__name__)
 
@@ -25,8 +19,7 @@ def ftp_metadados():
     return jsonify(upsert_dados_no_postgres())
 
 
-# V1
-@app.route("/pa", methods=['POST'])
+@app.route("/datasus_etl_e_load_pa", methods=['POST'])
 def sm_pa():
     content_type = request.headers.get('Content-Type')
     if (content_type == 'application/json'):
@@ -36,88 +29,98 @@ def sm_pa():
 
     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-    return jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
 
-# @app.route("/pa", methods=['POST'])
-# def sm_pa():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type != 'application/json'):
-#         return 'Erro, content-type deve ser json', 400
+@app.route("/datasus_etl_e_load_bpa", methods=['POST'])
+def sm_bpa():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
 
-#     json_params = request.json
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-#     # Supõe-se que a função `verificar_e_executar` retorna um dicionário com um campo "skip"
-#     resultado = verificar_e_executar(
-#         json_params['UF'], 
-#         data_datetime,
-#         json_params['tipo'],
-#         json_params['acao'])
-    
-#     # Verifica se a resposta indica que a tarefa deve ser pulada
-#     if resultado.get('status') == 'skipped':
-#         # return jsonify(resultado), 204  # Retorna 204 No Content para indicar que a tarefa deve ser pulada
-#         return jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['tipo'], json_params['acao'])), 204
-
-#     # Caso contrário, retorna o resultado normal
-#     elif resultado.get('status') == 'OK':
-#     # else:
-#         return jsonify(resultado), 200
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
 
-# V1
-# @app.route("/pa_postgres", methods=['POST'])
-# def load_pa():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type == 'application/json'):
-#         json_params = request.json
-#     else:
-#         return 'Erro, content-type deve ser json', 400
+@app.route("/datasus_etl_e_load_raas", methods=['POST'])
+def sm_raas():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
 
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-#     return jsonify(verificar_e_executar(json_params['UF'], data_datetime, json_params['tabela_destino']))
-
-
-# @app.route("/pa_postgres", methods=['POST'])
-# def load_pa():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type != 'application/json'):   
-#         return 'Erro, content-type deve ser json', 400
-    
-#     json_params = request.json
-
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
-
-#     return jsonify(verificar_e_executar(json_params['UF'], data_datetime))
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
 
-# @app.route("/bpa_i", methods=['POST'])
-# def sm_bpa_i():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type == 'application/json'):
-#         json_params = request.json
-#     else:
-#         return 'Erro, content-type deve ser json', 400
+@app.route("/datasus_etl_e_load_aih", methods=['POST'])
+def sm_aih():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
 
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-#     return jsonify(baixar_e_processar_bpa_i(json_params['UF'], data_datetime))
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
 
-# @app.route("/bpa_i_postgres", methods=['POST'])
-# def load_bpa_i():
-#     content_type = request.headers.get('Content-Type')
-#     if (content_type == 'application/json'):
-#         json_params = request.json
-#     else:
-#         return 'Erro, content-type deve ser json', 400
+@app.route("/datasus_etl_e_load_vinculos", methods=['POST'])
+def sm_vinculos():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
 
-#     data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
 
-#     return jsonify(inserir_bpa_i_postgres(json_params['UF'], data_datetime, json_params['tabela_destino']))
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
 
+
+@app.route("/datasus_etl_e_load_habilitacoes", methods=['POST'])
+def sm_habilitacoes():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
+
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+
+    return jsonify(verificar_e_executar_ftp(json_params['UF'], data_datetime, json_params['ETL'], json_params['acao']))
+
+
+@app.route("/sisab_etl_e_load_tipo_equipe", methods=['POST'])
+def sm_sisab_tipo_equipe():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
+
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+
+    return jsonify(verificar_e_executar_sisab(data_datetime, json_params['ETL'], json_params['acao']))
+
+
+@app.route("/sisab_etl_e_load_resolutividade", methods=['POST'])
+def sm_sisab_resolutividade():
+    content_type = request.headers.get('Content-Type')
+    if (content_type == 'application/json'):
+        json_params = request.json
+    else:
+        return 'Erro, content-type deve ser json', 400
+
+    data_datetime = datetime.datetime.strptime(json_params['data'], "%Y-%m-%d")
+
+    return jsonify(verificar_e_executar_sisab(data_datetime, json_params['ETL'], json_params['acao']))
 
 
 
