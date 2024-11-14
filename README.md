@@ -1,5 +1,3 @@
-# sm-etl-cloud-run
-
 <!--
 SPDX-FileCopyrightText: 2022 ImpulsoGov <contato@impulsogov.org>
 
